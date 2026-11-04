@@ -236,6 +236,14 @@ function initImportSheetModal() {
     const modalEl = document.getElementById("importSheetModal");
     if (!modalEl) return;
 
+    // Auto-open modal on first load if no sheet is connected yet
+    if (document.getElementById("autoOpenConnectModal")) {
+        const importModal = bootstrap.Modal.getOrCreateInstance(modalEl);
+        setTimeout(function () {
+            importModal.show();
+        }, 350);
+    }
+
     // Auto-focus URL input on open
     modalEl.addEventListener("shown.bs.modal", function () {
         const input = document.getElementById("modalSheetUrlInput");

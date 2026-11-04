@@ -319,14 +319,55 @@
 <div class="jira-board-viewport">
     @if (!Model.Issues.Any())
     {
-        <div class="jira-empty-state">
-            <i class="bi bi-inbox fs-2 text-muted"></i>
-            <h6 class="fw-bold mt-2">No matching cards found</h6>
-            <p class="text-muted small">Try adjusting your search criteria or clear active filters.</p>
-            <a asp-action="Index" asp-route-view="@Model.ActiveView" class="btn btn-jira-primary btn-sm">
-                Reset All Filters
-            </a>
-        </div>
+        @if (!Model.HasConfiguredUrl)
+        {
+            <!-- Auto-opens modal on first load if no sheet is connected -->
+            <div id="autoOpenConnectModal" class="d-none"></div>
+
+            <div class="card border-0 shadow-sm mx-auto my-4 p-4 text-center" style="max-width: 680px; border-radius: 12px; background: #ffffff;">
+                <div class="mb-3">
+                    <span class="d-inline-flex p-3 rounded-circle bg-primary-subtle text-primary">
+                        <i class="bi bi-cloud-arrow-down fs-1"></i>
+                    </span>
+                </div>
+                <h4 class="fw-bold text-dark mb-2">Connect Your Spreadsheet Link</h4>
+                <p class="text-muted small mb-4">
+                    Paste any public <strong>Google Sheet</strong>, <strong>Excel Online</strong>, <strong>SharePoint</strong>, or <strong>CSV</strong> link to generate your interactive Jira board in real-time.
+                </p>
+
+                <form asp-action="Import" method="post" class="w-100">
+                    @Html.AntiForgeryToken()
+                    <div class="input-group mb-3">
+                        <span class="input-group-text bg-light"><i class="bi bi-link-45deg text-primary"></i></span>
+                        <input type="url" name="GoogleSheetUrl" class="form-control" placeholder="https://docs.google.com/spreadsheets/d/... or Excel Online link" required />
+                        <button type="submit" class="btn btn-jira-primary px-3 fw-bold">
+                            <i class="bi bi-cloud-download me-1"></i> Load Board
+                        </button>
+                    </div>
+                </form>
+
+                <div class="d-flex justify-content-center align-items-center gap-3 flex-wrap text-muted small mt-2 pt-3 border-top">
+                    <span><i class="bi bi-check-circle-fill text-success me-1"></i> Google Sheets</span>
+                    <span><i class="bi bi-check-circle-fill text-success me-1"></i> Excel Online / SharePoint</span>
+                    <span><i class="bi bi-check-circle-fill text-success me-1"></i> CSV / XLSX Files</span>
+                    <span>·</span>
+                    <button type="button" class="btn btn-link btn-sm p-0 text-decoration-none" data-bs-toggle="modal" data-bs-target="#importSheetModal">
+                        More Import Options
+                    </button>
+                </div>
+            </div>
+        }
+        else
+        {
+            <div class="jira-empty-state">
+                <i class="bi bi-inbox fs-2 text-muted"></i>
+                <h6 class="fw-bold mt-2">No matching cards found</h6>
+                <p class="text-muted small">Try adjusting your search criteria or clear active filters.</p>
+                <a asp-action="Index" asp-route-view="@Model.ActiveView" class="btn btn-jira-primary btn-sm">
+                    Reset All Filters
+                </a>
+            </div>
+        }
     }
     else if (Model.ActiveView == "table")
     {

@@ -14,14 +14,13 @@ public class SheetDataService : ISheetDataService
     private readonly IWebHostEnvironment _environment;
     private readonly ILogger<SheetDataService> _logger;
     private readonly IHttpClientFactory _httpClientFactory;
-    private readonly IConfiguration _configuration;
     private readonly string _dataDirectory;
     private readonly string _activeDataFilePath;
     private readonly string _metadataFilePath;
     private readonly string _mediaDirectory;
 
     private List<SheetIssue> _cachedIssues = new();
-    private string _sourceName = "Live Sheet Data";
+    private string _sourceName = "No Sheet Connected";
     private string? _configuredUrl;
     private DateTime _lastUpdated = DateTime.Now;
     private readonly object _lock = new();
@@ -29,13 +28,11 @@ public class SheetDataService : ISheetDataService
     public SheetDataService(
         IWebHostEnvironment environment,
         ILogger<SheetDataService> logger,
-        IHttpClientFactory httpClientFactory,
-        IConfiguration configuration)
+        IHttpClientFactory httpClientFactory)
     {
         _environment = environment;
         _logger = logger;
         _httpClientFactory = httpClientFactory;
-        _configuration = configuration;
 
         _dataDirectory = Path.Combine(_environment.ContentRootPath, "Data");
         if (!Directory.Exists(_dataDirectory))
@@ -186,7 +183,7 @@ public class SheetDataService : ISheetDataService
 
     public string GetCurrentSourceName() => _sourceName;
     public DateTime GetLastUpdated() => _lastUpdated;
-    public string? GetConfiguredUrl() => _configuredUrl ?? _configuration["GoogleSheet:SheetUrl"];
+    public string? GetConfiguredUrl() => _configuredUrl;
 
     public Task<(bool Success, string Message, int Count)> ImportCsvAsync(string csvContent, string sourceName)
     {
@@ -354,35 +351,22 @@ public class SheetDataService : ISheetDataService
         }
     }
 
-    public Task ResetToSampleDataAsync()
+    public async Task ResetToSampleDataAsync()
     {
-        // Re-parse Data/sheet.xlsx if available, otherwise clear
-        var userXlsxPath = Path.Combine(_dataDirectory, "sheet.xlsx");
-        if (File.Exists(userXlsxPath))
+        if (!string.IsNullOrWhiteSpace(_configuredUrl))
         {
-            using var stream = File.OpenRead(userXlsxPath);
-            var parsed = ParseXlsxToIssues(stream);
-            if (parsed.Any())
-            {
-                lock (_lock)
-                {
-                    _cachedIssues = parsed;
-                    _sourceName = "Data/sheet.xlsx";
-                    _lastUpdated = File.GetLastWriteTime(userXlsxPath);
-                    SaveToDisk();
-                }
-                return Task.CompletedTask;
-            }
+            await ImportFromUrlAsync(_configuredUrl);
+            return;
         }
 
         lock (_lock)
         {
             _cachedIssues = new List<SheetIssue>();
-            _sourceName = "Empty (Awaiting Sheet Connection)";
+            _sourceName = "No Sheet Connected";
+            _configuredUrl = null;
             _lastUpdated = DateTime.Now;
             SaveToDisk();
         }
-        return Task.CompletedTask;
     }
 
     private void InitializeData()
@@ -391,58 +375,19 @@ public class SheetDataService : ISheetDataService
         {
             try
             {
-                // Check metadata
+                // Load user-entered link and session metadata if previously saved
                 if (File.Exists(_metadataFilePath))
                 {
                     var meta = JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText(_metadataFilePath));
                     if (meta != null)
                     {
-                        if (meta.TryGetValue("sourceName", out var sName)) _sourceName = sName;
-                        if (meta.TryGetValue("configuredUrl", out var cUrl)) _configuredUrl = cUrl;
+                        if (meta.TryGetValue("sourceName", out var sName) && !string.IsNullOrWhiteSpace(sName)) _sourceName = sName;
+                        if (meta.TryGetValue("configuredUrl", out var cUrl) && !string.IsNullOrWhiteSpace(cUrl)) _configuredUrl = cUrl.Trim();
                     }
                 }
 
-                // If not in metadata, check appsettings.json
-                var configUrl = _configuration["GoogleSheet:SheetUrl"];
-                if (string.IsNullOrWhiteSpace(_configuredUrl) && !string.IsNullOrWhiteSpace(configUrl))
-                {
-                    _configuredUrl = configUrl.Trim();
-                }
-
-                // Priority 1: Check if user has sheet.xlsx in Data/ (Real live data)
-                var userXlsxPath = Path.Combine(_dataDirectory, "sheet.xlsx");
-                if (File.Exists(userXlsxPath))
-                {
-                    using var stream = File.OpenRead(userXlsxPath);
-                    var parsed = ParseXlsxToIssues(stream);
-                    if (parsed.Any())
-                    {
-                        _cachedIssues = parsed;
-                        _sourceName = "Live Bugs Sheet (sheet.xlsx)";
-                        _lastUpdated = File.GetLastWriteTime(userXlsxPath);
-                        SaveToDisk();
-                        return;
-                    }
-                }
-
-                // Priority 2: Check if user placed sheet.csv in Data/
-                var userCsvPath = Path.Combine(_dataDirectory, "sheet.csv");
-                if (File.Exists(userCsvPath))
-                {
-                    var text = File.ReadAllText(userCsvPath);
-                    var parsed = ParseCsvToIssues(text);
-                    if (parsed.Any())
-                    {
-                        _cachedIssues = parsed;
-                        _sourceName = "Data/sheet.csv";
-                        _lastUpdated = File.GetLastWriteTime(userCsvPath);
-                        SaveToDisk();
-                        return;
-                    }
-                }
-
-                // Priority 3: Check active-issues.json
-                if (File.Exists(_activeDataFilePath))
+                // If user has configured a link or imported data, load their cached issues
+                if (!string.IsNullOrWhiteSpace(_configuredUrl) && File.Exists(_activeDataFilePath))
                 {
                     var json = File.ReadAllText(_activeDataFilePath);
                     var list = JsonSerializer.Deserialize<List<SheetIssue>>(json);
@@ -455,11 +400,12 @@ public class SheetDataService : ISheetDataService
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to load live issues from disk");
+                _logger.LogError(ex, "Failed to load user sheet data from disk");
             }
 
             _cachedIssues = new List<SheetIssue>();
-            _sourceName = "Live Sheet (No Data Loaded)";
+            _sourceName = "No Sheet Connected";
+            _configuredUrl = null;
             _lastUpdated = DateTime.Now;
         }
     }
