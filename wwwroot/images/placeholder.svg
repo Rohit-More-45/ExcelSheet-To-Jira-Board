@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="250" viewBox="0 0 400 250" fill="none">
+  <rect width="400" height="250" fill="#F4F5F7" rx="8"/>
+  <rect x="2" y="2" width="396" height="246" stroke="#DFE1E6" stroke-width="2" stroke-dasharray="6 6" rx="6"/>
+  <circle cx="200" cy="100" r="32" fill="#EBECF0"/>
+  <path d="M188 94C188 90.6863 190.686 88 194 88H206C209.314 88 212 90.6863 212 94V106C212 109.314 209.314 112 206 112H194C190.686 112 188 109.314 188 106V94Z" stroke="#6B778C" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="195" cy="95" r="1.5" fill="#6B778C"/>
+  <path d="M211 104L204 97L194 107" stroke="#6B778C" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="200" y="150" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="14" font-weight="600" fill="#6B778C" text-anchor="middle">No Image Available</text>
+  <text x="200" y="172" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="12" fill="#8993A4" text-anchor="middle">Google Sheet record has no photo URL</text>
+</svg>
+

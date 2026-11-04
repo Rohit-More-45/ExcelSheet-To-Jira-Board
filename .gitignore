@@ -1,0 +1,24 @@
+# .NET Core / Visual Studio build & cache
+bin/
+obj/
+out/
+.vs/
+.vscode/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Security, Credentials & Private Data
+Data/Keys/
+Data/sheet.xlsx
+Data/sheet.csv
+cookies.txt
+*.cookie
+*.cookies
+.env
+.env.*
+
+# OS Files
+.DS_Store
+Thumbs.db
