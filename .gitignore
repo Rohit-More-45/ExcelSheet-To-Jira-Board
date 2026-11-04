@@ -13,6 +13,8 @@ out/
 Data/Keys/
 Data/sheet.xlsx
 Data/sheet.csv
+Data/metadata.json
+Data/active-issues.json
 cookies.txt
 *.cookie
 *.cookies

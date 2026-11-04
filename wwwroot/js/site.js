@@ -356,6 +356,9 @@ function initMultiFilters() {
             applyClientFilters(true);
         });
     }
+
+    // Evaluate initial filters on page startup (synchronize DOM with checked state)
+    applyClientFilters(false);
 }
 
 function updateDropdownCounter(dropdown) {
@@ -368,11 +371,17 @@ function updateDropdownCounter(dropdown) {
 }
 
 function removeFilter(type, value) {
-    const cb = document.querySelector(`.jira-filter-dropdown[data-filter-type="${type}"] input[value="${value}"]`);
-    if (cb) {
-        cb.checked = false;
+    const dropdown = document.querySelector(`.jira-filter-dropdown[data-filter-type="${type}"]`);
+    if (dropdown) {
+        const valLower = (value || "").trim().toLowerCase();
+        dropdown.querySelectorAll(".filter-checkbox").forEach(function (cb) {
+            if ((cb.value || "").trim().toLowerCase() === valLower) {
+                cb.checked = false;
+            }
+        });
+        updateDropdownCounter(dropdown);
     }
-    applyClientFilters();
+    applyClientFilters(true);
 }
 
 function removeSearchFilter() {
@@ -380,7 +389,7 @@ function removeSearchFilter() {
     const clearBtn = document.getElementById("searchClearBtn");
     if (searchInput) searchInput.value = "";
     if (clearBtn) clearBtn.style.display = "none";
-    applyClientFilters();
+    applyClientFilters(true);
 }
 
 function togglePhotosFilter(enable) {
@@ -388,12 +397,15 @@ function togglePhotosFilter(enable) {
     const photosHidden = document.getElementById("withPhotosHidden");
     if (photosHidden) photosHidden.value = enable ? "true" : "false";
     if (photosBtn) photosBtn.classList.toggle("active", enable);
-    applyClientFilters();
+    applyClientFilters(true);
 }
 
 function clearAllFilters() {
     document.querySelectorAll(".jira-filter-dropdown .filter-checkbox").forEach(function (cb) {
         cb.checked = false;
+    });
+    document.querySelectorAll(".jira-filter-dropdown").forEach(function (dropdown) {
+        updateDropdownCounter(dropdown);
     });
     const searchInput = document.getElementById("clientSearchInput");
     const clearBtn = document.getElementById("searchClearBtn");
@@ -405,7 +417,7 @@ function clearAllFilters() {
     if (photosHidden) photosHidden.value = "false";
     if (photosBtn) photosBtn.classList.remove("active");
 
-    applyClientFilters();
+    applyClientFilters(true);
 }
 
 function applyClientFilters(notify = false) {
@@ -413,45 +425,59 @@ function applyClientFilters(notify = false) {
     const searchQuery = searchInput ? searchInput.value.trim().toLowerCase() : "";
 
     const selectedStatuses = getCheckedValues("status");
+    const selectedStatusesLower = selectedStatuses.map(s => s.trim().toLowerCase()).filter(Boolean);
+
     const selectedAssignees = getCheckedValues("assignee");
+    const selectedAssigneesLower = selectedAssignees.map(a => a.trim().toLowerCase()).filter(Boolean);
+
     const selectedPriorities = getCheckedValues("priority");
+    const selectedPrioritiesLower = selectedPriorities.map(p => p.trim().toLowerCase()).filter(Boolean);
+
     const selectedTypes = getCheckedValues("type");
+    const selectedTypesLower = selectedTypes.map(t => t.trim().toLowerCase()).filter(Boolean);
 
     const photosHidden = document.getElementById("withPhotosHidden");
-    const photosOnly = photosHidden ? photosHidden.value === "true" : false;
+    const photosOnly = photosHidden ? (photosHidden.value === "true") : false;
 
     let totalVisible = 0;
 
     function matchesFilter(cardStatus, cardAssignee, cardPriority, cardType, cardHasPhoto, cardSearchText) {
-        const sMatch = selectedStatuses.length === 0 || selectedStatuses.includes(cardStatus.toLowerCase());
-        const aMatch = selectedAssignees.length === 0 || selectedAssignees.includes(cardAssignee.toLowerCase());
-        const pMatch = selectedPriorities.length === 0 || selectedPriorities.includes(cardPriority.toLowerCase());
-        const tMatch = selectedTypes.length === 0 || selectedTypes.includes(cardType.toLowerCase());
-        const photoMatch = !photosOnly || cardHasPhoto;
-        const searchMatch = !searchQuery || cardSearchText.includes(searchQuery);
+        const normStatus = (cardStatus || "open").trim().toLowerCase();
+        const normAssignee = (cardAssignee || "unassigned").trim().toLowerCase();
+        const normPriority = (cardPriority || "major").trim().toLowerCase();
+        const normType = (cardType || "bug").trim().toLowerCase();
+
+        const sMatch = selectedStatusesLower.length === 0 || selectedStatusesLower.includes(normStatus);
+        const aMatch = selectedAssigneesLower.length === 0 || selectedAssigneesLower.includes(normAssignee);
+        const pMatch = selectedPrioritiesLower.length === 0 || selectedPrioritiesLower.includes(normPriority);
+        const tMatch = selectedTypesLower.length === 0 || selectedTypesLower.includes(normType);
+        const photoMatch = !photosOnly || Boolean(cardHasPhoto);
+        const searchMatch = !searchQuery || (cardSearchText || "").toLowerCase().includes(searchQuery);
 
         return sMatch && aMatch && pMatch && tMatch && photoMatch && searchMatch;
     }
 
     // 1. Kanban cards
     const cards = document.querySelectorAll(".jira-card");
-    cards.forEach(function (card) {
-        const cStatus = card.getAttribute("data-status") || "";
-        const cAssignee = card.getAttribute("data-assignee") || "Unassigned";
-        const cPriority = card.getAttribute("data-priority") || "";
-        const cType = card.getAttribute("data-type") || "Bug";
-        const cHasPhoto = card.getAttribute("data-has-photo") === "true";
-        const cSearch = (card.getAttribute("data-searchable-text") || card.textContent).toLowerCase();
+    if (cards.length > 0) {
+        cards.forEach(function (card) {
+            const cStatus = card.getAttribute("data-status") || "";
+            const cAssignee = card.getAttribute("data-assignee") || "Unassigned";
+            const cPriority = card.getAttribute("data-priority") || "";
+            const cType = card.getAttribute("data-type") || "Bug";
+            const cHasPhoto = card.getAttribute("data-has-photo") === "true";
+            const cSearch = card.getAttribute("data-searchable-text") || card.textContent || "";
 
-        const isVisible = matchesFilter(cStatus, cAssignee, cPriority, cType, cHasPhoto, cSearch);
-        card.style.display = isVisible ? "" : "none";
-        if (isVisible) totalVisible++;
-    });
+            const isVisible = matchesFilter(cStatus, cAssignee, cPriority, cType, cHasPhoto, cSearch);
+            card.style.display = isVisible ? "" : "none";
+            if (isVisible) totalVisible++;
+        });
+    }
 
     // Update column counters & visibility
     document.querySelectorAll(".jira-column").forEach(function (col) {
-        const colStatus = (col.getAttribute("data-column-status") || "").toLowerCase();
-        if (selectedStatuses.length === 0 || selectedStatuses.includes(colStatus)) {
+        const colStatus = (col.getAttribute("data-column-status") || "").trim().toLowerCase();
+        if (selectedStatusesLower.length === 0 || selectedStatusesLower.includes(colStatus)) {
             col.style.display = "";
         } else {
             col.style.display = "none";
@@ -474,7 +500,7 @@ function applyClientFilters(notify = false) {
             const rPriority = row.getAttribute("data-priority") || "";
             const rType = row.getAttribute("data-type") || "Bug";
             const rHasPhoto = row.getAttribute("data-has-photo") === "true";
-            const rSearch = (row.getAttribute("data-searchable-text") || row.textContent).toLowerCase();
+            const rSearch = row.getAttribute("data-searchable-text") || row.textContent || "";
 
             const isVisible = matchesFilter(rStatus, rAssignee, rPriority, rType, rHasPhoto, rSearch);
             row.style.display = isVisible ? "" : "none";
@@ -492,7 +518,7 @@ function applyClientFilters(notify = false) {
             const gPriority = card.getAttribute("data-priority") || "";
             const gType = card.getAttribute("data-type") || "Bug";
             const gHasPhoto = card.getAttribute("data-has-photo") === "true";
-            const gSearch = (card.getAttribute("data-searchable-text") || card.textContent).toLowerCase();
+            const gSearch = card.getAttribute("data-searchable-text") || card.textContent || "";
 
             const isVisible = matchesFilter(gStatus, gAssignee, gPriority, gType, gHasPhoto, gSearch);
             card.style.display = isVisible ? "" : "none";
@@ -503,6 +529,12 @@ function applyClientFilters(notify = false) {
     const counterEl = document.getElementById("visibleCardsCounter");
     if (counterEl) {
         counterEl.textContent = totalVisible;
+    }
+
+    const noResultsEl = document.getElementById("clientNoResultsNotice");
+    if (noResultsEl) {
+        const hasCardsToBeginWith = (cards.length > 0 || tableRows.length > 0 || galleryCards.length > 0);
+        noResultsEl.style.display = (totalVisible === 0 && hasCardsToBeginWith) ? "block" : "none";
     }
 
     updateFilterButtonBadge("status", selectedStatuses);

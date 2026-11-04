@@ -56,81 +56,24 @@ public class HomeController : Controller
             .GroupBy(i => string.IsNullOrWhiteSpace(i.IssueType) ? "Bug" : i.IssueType.Trim(), StringComparer.OrdinalIgnoreCase)
             .ToDictionary(g => g.Key, g => g.Count(), StringComparer.OrdinalIgnoreCase);
 
-        // Multi-Filter Logic (AND across categories, OR within same category)
-        var filtered = allIssues.AsEnumerable();
-
-        if (!string.IsNullOrWhiteSpace(search))
+        // Sort full dataset according to sortBy
+        var sortedIssues = (sortBy switch
         {
-            var q = search.Trim();
-            filtered = filtered.Where(i =>
-                (i.Title != null && i.Title.Contains(q, StringComparison.OrdinalIgnoreCase)) ||
-                (i.Key != null && i.Key.Contains(q, StringComparison.OrdinalIgnoreCase)) ||
-                (i.Description != null && i.Description.Contains(q, StringComparison.OrdinalIgnoreCase)) ||
-                (i.Assignee != null && i.Assignee.Contains(q, StringComparison.OrdinalIgnoreCase)) ||
-                (i.Tags != null && i.Tags.Any(t => t.Contains(q, StringComparison.OrdinalIgnoreCase))) ||
-                (i.CustomFields != null && i.CustomFields.Values.Any(v => v.Contains(q, StringComparison.OrdinalIgnoreCase)))
-            );
-        }
-
-        if (statusList.Any())
-        {
-            filtered = filtered.Where(i =>
-            {
-                var s = string.IsNullOrWhiteSpace(i.Status) ? "Open" : i.Status.Trim();
-                return statusList.Contains(s, StringComparer.OrdinalIgnoreCase);
-            });
-        }
-
-        if (assigneeList.Any())
-        {
-            filtered = filtered.Where(i =>
-            {
-                var a = string.IsNullOrWhiteSpace(i.Assignee) ? "Unassigned" : i.Assignee.Trim();
-                return assigneeList.Contains(a, StringComparer.OrdinalIgnoreCase);
-            });
-        }
-
-        if (priorityList.Any())
-        {
-            filtered = filtered.Where(i =>
-            {
-                var p = string.IsNullOrWhiteSpace(i.Priority) ? "Major" : i.Priority.Trim();
-                return priorityList.Contains(p, StringComparer.OrdinalIgnoreCase);
-            });
-        }
-
-        if (typeList.Any())
-        {
-            filtered = filtered.Where(i =>
-            {
-                var t = string.IsNullOrWhiteSpace(i.IssueType) ? "Bug" : i.IssueType.Trim();
-                return typeList.Contains(t, StringComparer.OrdinalIgnoreCase);
-            });
-        }
-
-        if (withPhotos)
-        {
-            filtered = filtered.Where(i => i.HasPhoto);
-        }
-
-        // Sorting
-        filtered = sortBy switch
-        {
-            "priority-desc" => filtered.OrderByDescending(i => GetPriorityWeight(i.Priority)),
-            "priority-asc" => filtered.OrderBy(i => GetPriorityWeight(i.Priority)),
-            "key-asc" => filtered.OrderBy(i => i.Key),
-            "key-desc" => filtered.OrderByDescending(i => i.Key),
-            "title-asc" => filtered.OrderBy(i => i.Title),
-            "title-desc" => filtered.OrderByDescending(i => i.Title),
-            "date-asc" => filtered.OrderBy(i => i.DueDate ?? DateTime.MaxValue),
-            "date-desc" => filtered.OrderByDescending(i => i.DueDate ?? DateTime.MinValue),
-            "created-desc" => filtered.OrderByDescending(i => i.CreatedDate ?? DateTime.MinValue),
-            _ => filtered.OrderByDescending(i => GetPriorityWeight(i.Priority))
-        };
+            "priority-desc" => allIssues.OrderByDescending(i => GetPriorityWeight(i.Priority)),
+            "priority-asc" => allIssues.OrderBy(i => GetPriorityWeight(i.Priority)),
+            "key-asc" => allIssues.OrderBy(i => i.Key),
+            "key-desc" => allIssues.OrderByDescending(i => i.Key),
+            "title-asc" => allIssues.OrderBy(i => i.Title),
+            "title-desc" => allIssues.OrderByDescending(i => i.Title),
+            "date-asc" => allIssues.OrderBy(i => i.DueDate ?? DateTime.MaxValue),
+            "date-desc" => allIssues.OrderByDescending(i => i.DueDate ?? DateTime.MinValue),
+            "created-desc" => allIssues.OrderByDescending(i => i.CreatedDate ?? DateTime.MinValue),
+            _ => allIssues.OrderByDescending(i => GetPriorityWeight(i.Priority))
+        }).ToList();
 
         var model = new BoardViewModel
         {
-            Issues = filtered.ToList(),
+            Issues = sortedIssues,
             Statuses = statuses,
             Assignees = assignees,
             Priorities = priorities,

@@ -55,17 +55,18 @@ public class BoardViewModel
         CurrentTypeFilters.Count +
         (OnlyWithPhotos ? 1 : 0);
 
-    // Dynamic columns to display in Kanban board
-    public List<string> DisplayStatuses =>
-        CurrentStatusFilters.Any()
-            ? Statuses.Where(s => CurrentStatusFilters.Contains(s, StringComparer.OrdinalIgnoreCase)).ToList()
-            : Statuses;
+    // Dynamic columns to display in Kanban board (all columns present so client filtering can toggle them)
+    public List<string> DisplayStatuses => Statuses;
 
     // Grouping by status for board view
     public Dictionary<string, List<SheetIssue>> IssuesByStatus =>
         DisplayStatuses.ToDictionary(
             status => status,
-            status => Issues.Where(i => string.Equals(i.Status, status, StringComparison.OrdinalIgnoreCase)).ToList()
+            status => Issues.Where(i =>
+                string.Equals(i.Status, status, StringComparison.OrdinalIgnoreCase) ||
+                (string.IsNullOrWhiteSpace(i.Status) && string.Equals(status, "Open", StringComparison.OrdinalIgnoreCase))
+            ).ToList(),
+            StringComparer.OrdinalIgnoreCase
         );
 }
 
