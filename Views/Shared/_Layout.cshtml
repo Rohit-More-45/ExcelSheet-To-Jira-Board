@@ -48,8 +48,8 @@
                         <i class="bi bi-download"></i> Export CSV
                     </a>
 
-                    <button type="button" class="btn btn-sm btn-jira-subtle" data-bs-toggle="modal" data-bs-target="#importSheetModal" title="Connect another Sheet URL or upload file">
-                        <i class="bi bi-link-45deg"></i> Connect Sheet
+                    <button type="button" class="btn btn-sm btn-jira-primary shadow-sm" data-bs-toggle="modal" data-bs-target="#importSheetModal" title="Connect any Google Sheet, Excel Online, SharePoint or CSV link">
+                        <i class="bi bi-link-45deg"></i> Connect Sheet / Paste Link
                     </button>
                 </div>
             </div>
@@ -79,18 +79,22 @@
     <!-- Connect / Import Google Sheet Modal -->
     <div class="modal fade" id="importSheetModal" tabindex="-1" aria-labelledby="importSheetModalLabel" aria-hidden="true">
         <div class="modal-dialog modal-lg modal-dialog-centered">
-            <div class="modal-content">
-                <div class="modal-header py-2 px-3">
+            <div class="modal-content border-0 shadow">
+                <div class="modal-header py-2 px-3 bg-light border-bottom">
                     <h6 class="modal-title fw-bold" id="importSheetModalLabel">
-                        <i class="bi bi-cloud-arrow-up text-primary me-2"></i>Connect Sheet / Upload Data
+                        <i class="bi bi-cloud-arrow-down text-primary me-2"></i>Connect Any Sheet / Paste Link
                     </h6>
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
                 <div class="modal-body p-3">
+                    <p class="small text-muted mb-3">
+                        Connect any public cloud spreadsheet link. The board will automatically parse cards, workflow columns, assignees, priorities, and screenshot attachments into a live Jira Kanban board.
+                    </p>
+
                     <ul class="nav nav-tabs mb-3" id="importTabs" role="tablist">
                         <li class="nav-item" role="presentation">
                             <button class="nav-link active fw-bold small" id="url-tab" data-bs-toggle="tab" data-bs-target="#tab-url" type="button" role="tab">
-                                <i class="bi bi-link-45deg me-1"></i> Cloud Sheet URL
+                                <i class="bi bi-link-45deg me-1"></i> Paste Sheet URL
                             </button>
                         </li>
                         <li class="nav-item" role="presentation">
@@ -100,7 +104,7 @@
                         </li>
                         <li class="nav-item" role="presentation">
                             <button class="nav-link fw-bold small" id="paste-tab" data-bs-toggle="tab" data-bs-target="#tab-paste" type="button" role="tab">
-                                <i class="bi bi-clipboard me-1"></i> Paste Cells
+                                <i class="bi bi-clipboard me-1"></i> Paste Copied Rows
                             </button>
                         </li>
                     </ul>
@@ -108,11 +112,33 @@
                     <div class="tab-content" id="importTabContent">
                         <!-- Tab 1: Sheet URL -->
                         <div class="tab-pane fade show active" id="tab-url" role="tabpanel">
-                            <form asp-action="Import" method="post">
+                            <form asp-action="Import" method="post" id="importUrlForm">
                                 @Html.AntiForgeryToken()
                                 <div class="mb-3">
-                                    <label class="form-label fw-semibold small">SharePoint or Google Sheet Public Link</label>
-                                    <input type="url" name="GoogleSheetUrl" class="form-control form-control-sm" value="@(SheetService.GetConfiguredUrl() ?? "")" placeholder="https://..." required />
+                                    <label class="form-label fw-semibold small">Google Sheet, Excel Online, SharePoint or CSV Public Link</label>
+                                    <div class="input-group input-group-sm">
+                                        <span class="input-group-text bg-light"><i class="bi bi-link-45deg"></i></span>
+                                        <input type="url" 
+                                               name="GoogleSheetUrl" 
+                                               id="modalSheetUrlInput" 
+                                               class="form-control" 
+                                               value="@(SheetService.GetConfiguredUrl() ?? "")" 
+                                               placeholder="https://docs.google.com/spreadsheets/d/... or SharePoint / Excel Online / CSV link" 
+                                               required />
+                                        <button type="button" class="btn btn-outline-secondary" id="pasteClipboardBtn" title="Paste link from clipboard">
+                                            <i class="bi bi-clipboard"></i> Paste
+                                        </button>
+                                    </div>
+
+                                    <div class="mt-2 d-flex flex-wrap gap-1">
+                                        <span class="badge bg-light text-secondary border font-monospace small"><i class="bi bi-google text-primary me-1"></i> Google Sheets</span>
+                                        <span class="badge bg-light text-secondary border font-monospace small"><i class="bi bi-file-earmark-excel text-success me-1"></i> Excel Online / SharePoint</span>
+                                        <span class="badge bg-light text-secondary border font-monospace small"><i class="bi bi-filetype-csv text-info me-1"></i> Direct CSV / XLSX URLs</span>
+                                    </div>
+
+                                    <div class="small text-muted mt-2 ps-1 border-start border-2 border-primary">
+                                        <i class="bi bi-info-circle text-primary me-1"></i> <strong>Tip:</strong> Ensure your Google Sheet has <em>"General access: Anyone with the link can view"</em> (or <em>File &gt; Share &gt; Publish to web &gt; CSV</em>).
+                                    </div>
                                     
                                     @if (!string.IsNullOrWhiteSpace(SheetService.GetConfiguredUrl()))
                                     {
@@ -124,7 +150,7 @@
                                 </div>
                                 <div class="d-flex justify-content-end gap-2">
                                     <button type="button" class="btn btn-sm btn-light" data-bs-dismiss="modal">Cancel</button>
-                                    <button type="submit" class="btn btn-sm btn-jira-primary">
+                                    <button type="submit" id="fetchSheetSubmitBtn" class="btn btn-sm btn-jira-primary fw-semibold">
                                         <i class="bi bi-cloud-download me-1"></i> Fetch & Load Sheet
                                     </button>
                                 </div>

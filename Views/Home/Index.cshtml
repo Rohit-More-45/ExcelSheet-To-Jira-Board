@@ -130,6 +130,12 @@
                         </label>
                     }
                 </div>
+                <div class="jira-filter-menu-footer d-flex justify-content-between align-items-center">
+                    <span class="small text-muted dropdown-selected-counter">0 selected</span>
+                    <button type="button" class="btn btn-xs btn-jira-primary apply-dropdown-filter-btn">
+                        <i class="bi bi-check2"></i> Apply
+                    </button>
+                </div>
             </div>
         </div>
 
@@ -168,6 +174,12 @@
                             <span class="option-count">@count</span>
                         </label>
                     }
+                </div>
+                <div class="jira-filter-menu-footer d-flex justify-content-between align-items-center">
+                    <span class="small text-muted dropdown-selected-counter">0 selected</span>
+                    <button type="button" class="btn btn-xs btn-jira-primary apply-dropdown-filter-btn">
+                        <i class="bi bi-check2"></i> Apply
+                    </button>
                 </div>
             </div>
         </div>
@@ -211,6 +223,12 @@
                         </label>
                     }
                 </div>
+                <div class="jira-filter-menu-footer d-flex justify-content-between align-items-center">
+                    <span class="small text-muted dropdown-selected-counter">0 selected</span>
+                    <button type="button" class="btn btn-xs btn-jira-primary apply-dropdown-filter-btn">
+                        <i class="bi bi-check2"></i> Apply
+                    </button>
+                </div>
             </div>
         </div>
 
@@ -221,6 +239,14 @@
                 title="Filter bugs with attached screenshot photos">
             <i class="bi bi-camera-fill text-primary"></i> Photos Only
             <span class="badge bg-light text-dark ms-1">@Model.TotalPhotosCount</span>
+        </button>
+
+        <!-- Primary Search Button: Apply Filters & Search -->
+        <button type="button" 
+                id="applyFiltersSearchBtn" 
+                class="btn btn-sm btn-jira-primary py-1 px-3 fw-bold shadow-sm" 
+                title="Search and apply all selected filters">
+            <i class="bi bi-search me-1"></i> Search
         </button>
 
         <!-- Sort By -->

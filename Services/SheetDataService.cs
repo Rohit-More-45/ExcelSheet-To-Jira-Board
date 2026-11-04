@@ -78,8 +78,12 @@ public class SheetDataService : ISheetDataService
     {
         lock (_lock)
         {
-            // Standard order for bugs/tasks
-            var preferredOrder = new[] { "Open", "Reopen", "In Progress", "Ready for QA", "Testing", "Merged", "Tested and Closed", "Done", "Closed" };
+            // Standard order for modern workflows (Jira Scrum/Kanban, QA, and task boards)
+            var preferredOrder = new[] { 
+                "Backlog", "To Do", "Open", "Selected for Development", 
+                "In Progress", "In Review", "Testing", "Ready for QA", 
+                "Merged", "Done", "Tested and Closed", "Closed", "Archived" 
+            };
 
             var presentStatuses = _cachedIssues
                 .Select(i => string.IsNullOrWhiteSpace(i.Status) ? "Open" : i.Status.Trim())
@@ -682,18 +686,23 @@ public class SheetDataService : ISheetDataService
         var headers = rows[0].Select(h => h.Trim()).ToList();
         var issues = new List<SheetIssue>();
 
-        // Heuristics for standard fields
-        int keyIndex = FindColumnIndex(headers, "bug no.", "bug no", "key", "issue key", "ticket", "id", "task id", "code", "#");
-        int titleIndex = FindColumnIndex(headers, "bug - title", "bug title", "title", "summary", "task", "name", "subject");
-        int descIndex = FindColumnIndex(headers, "description", "details", "notes", "remarks", "desc");
-        int statusIndex = FindColumnIndex(headers, "qa status", "status", "devloper status", "developer status", "state", "stage");
-        int priorityIndex = FindColumnIndex(headers, "critical", "priority", "urgency", "severity", "level");
-        int assigneeIndex = FindColumnIndex(headers, "developer", "assignee", "assigned to", "owner", "person", "member");
-        int moduleIndex = FindColumnIndex(headers, "module", "feature/module", "feature", "category", "component");
+        bool isBugSheet = headers.Any(h => h.Contains("bug", StringComparison.OrdinalIgnoreCase));
+        string defaultPrefix = isBugSheet ? "BUG" : "TASK";
+
+        // Heuristics for standard fields across any generic spreadsheet
+        int keyIndex = FindColumnIndex(headers, "key", "issue key", "ticket", "id", "task id", "item id", "bug no.", "bug no", "no.", "no", "#", "code", "number");
+        int titleIndex = FindColumnIndex(headers, "title", "summary", "task", "task name", "bug - title", "bug title", "name", "item", "subject", "feature", "topic", "headline");
+        int descIndex = FindColumnIndex(headers, "description", "details", "notes", "remarks", "content", "desc", "body");
+        int statusIndex = FindColumnIndex(headers, "status", "qa status", "developer status", "dev status", "state", "stage", "column", "progress", "phase", "condition");
+        int priorityIndex = FindColumnIndex(headers, "priority", "critical", "severity", "urgency", "importance", "level", "rank", "impact");
+        int assigneeIndex = FindColumnIndex(headers, "assignee", "assigned to", "developer", "owner", "lead", "person", "member", "resource", "assigned", "who");
+        int typeIndex = FindColumnIndex(headers, "type", "issue type", "work item type", "kind", "category");
+        int moduleIndex = FindColumnIndex(headers, "module", "feature/module", "feature", "category", "component", "tags", "tag", "label", "labels", "epic");
         int stepsIndex = FindColumnIndex(headers, "steps to reproduce", "steps", "reproduction");
         int actualIndex = FindColumnIndex(headers, "actual result", "actual");
         int expectedIndex = FindColumnIndex(headers, "expected result", "expected");
         int commentsIndex = FindColumnIndex(headers, "comments", "comment");
+        int dueDateIndex = FindColumnIndex(headers, "due date", "due", "deadline", "target date", "end date");
         int createdDateIndex = FindColumnIndex(headers, "created date", "created", "date created", "timestamp", "date");
 
         // Photo columns
@@ -720,18 +729,24 @@ public class SheetDataService : ISheetDataService
             var issue = new SheetIssue
             {
                 Id = $"ISSUE-{rowNum}",
-                IssueType = "Bug"
+                IssueType = isBugSheet ? "Bug" : "Task"
             };
 
             // Key
             if (keyIndex >= 0 && keyIndex < row.Count && !string.IsNullOrWhiteSpace(row[keyIndex]))
             {
                 var rawKey = row[keyIndex].Trim();
-                issue.Key = rawKey.Contains('-') ? rawKey : $"BUG-{rawKey}";
+                issue.Key = rawKey.Contains('-') ? rawKey : $"{defaultPrefix}-{rawKey}";
             }
             else
             {
-                issue.Key = $"BUG-{rowNum}";
+                issue.Key = $"{defaultPrefix}-{rowNum}";
+            }
+
+            // Issue Type
+            if (typeIndex >= 0 && typeIndex < row.Count && !string.IsNullOrWhiteSpace(row[typeIndex]))
+            {
+                issue.IssueType = NormalizeIssueType(row[typeIndex].Trim());
             }
 
             // Title
@@ -741,7 +756,7 @@ public class SheetDataService : ISheetDataService
             }
             else
             {
-                issue.Title = row.FirstOrDefault(c => !string.IsNullOrWhiteSpace(c) && !c.StartsWith("http")) ?? $"Bug #{rowNum}";
+                issue.Title = row.FirstOrDefault(c => !string.IsNullOrWhiteSpace(c) && !c.StartsWith("http")) ?? $"Item #{rowNum}";
             }
 
             // Description
@@ -757,7 +772,7 @@ public class SheetDataService : ISheetDataService
             }
             else
             {
-                issue.Status = "Open";
+                issue.Status = "To Do";
             }
 
             // Priority
@@ -767,7 +782,7 @@ public class SheetDataService : ISheetDataService
             }
             else
             {
-                issue.Priority = "Major";
+                issue.Priority = "Medium";
             }
 
             // Assignee
@@ -785,6 +800,12 @@ public class SheetDataService : ISheetDataService
             {
                 var mod = row[moduleIndex].Trim();
                 issue.Tags.Add(mod);
+            }
+
+            // Due Date
+            if (dueDateIndex >= 0 && dueDateIndex < row.Count && DateTime.TryParse(row[dueDateIndex].Trim(), out var parsedDue))
+            {
+                issue.DueDate = parsedDue;
             }
 
             // Created Date
@@ -943,28 +964,43 @@ public class SheetDataService : ISheetDataService
     private static string NormalizeStatus(string status)
     {
         var trimmed = status?.Trim() ?? "";
-        if (string.IsNullOrWhiteSpace(trimmed)) return "Open";
+        if (string.IsNullOrWhiteSpace(trimmed)) return "To Do";
         var lower = trimmed.ToLowerInvariant();
         if (lower.Contains("tested") && lower.Contains("closed")) return "Tested and Closed";
         if (lower.Contains("ready") && lower.Contains("qa")) return "Ready for QA";
         if (lower == "reopen" || lower.Contains("re-open")) return "Reopen";
         if (lower == "merged") return "Merged";
         if (lower == "open") return "Open";
-        if (lower.Contains("progress") || lower == "wip") return "In Progress";
-        if (lower.Contains("review")) return "In Review";
-        if (lower.Contains("done") || lower.Contains("closed") || lower.Contains("resolved")) return "Tested and Closed";
+        if (lower == "to do" || lower == "todo" || lower == "backlog") return "To Do";
+        if (lower.Contains("progress") || lower == "wip" || lower.Contains("doing") || lower.Contains("develop")) return "In Progress";
+        if (lower.Contains("review") || lower.Contains("test")) return "In Review";
+        if (lower == "done" || lower == "completed" || lower == "finished" || lower == "resolved") return "Done";
+        if (lower == "closed") return "Closed";
         return CultureInfo.CurrentCulture.TextInfo.ToTitleCase(trimmed.ToLowerInvariant());
     }
 
     private static string NormalizePriority(string priority)
     {
         var trimmed = priority?.Trim() ?? "";
+        if (string.IsNullOrWhiteSpace(trimmed)) return "Medium";
         var lower = trimmed.ToLowerInvariant();
-        if (lower.Contains("critical") || lower.Contains("highest") || lower == "blocker") return "Critical";
-        if (lower.Contains("major") || lower.Contains("high")) return "Major";
-        if (lower.Contains("minor") || lower.Contains("low")) return "Minor";
-        if (lower.Contains("trivial") || lower.Contains("lowest")) return "Lowest";
-        return string.IsNullOrWhiteSpace(trimmed) ? "Major" : CultureInfo.CurrentCulture.TextInfo.ToTitleCase(lower);
+        if (lower.Contains("critical") || lower.Contains("highest") || lower == "blocker" || lower == "p1" || lower == "urgent") return "Critical";
+        if (lower.Contains("major") || lower.Contains("high") || lower == "p2") return "High";
+        if (lower.Contains("medium") || lower == "normal" || lower == "p3") return "Medium";
+        if (lower.Contains("minor") || lower.Contains("low") || lower == "p4") return "Low";
+        if (lower.Contains("trivial") || lower.Contains("lowest") || lower == "p5") return "Lowest";
+        return CultureInfo.CurrentCulture.TextInfo.ToTitleCase(lower);
+    }
+
+    private static string NormalizeIssueType(string type)
+    {
+        var trimmed = type?.Trim() ?? "";
+        if (string.IsNullOrWhiteSpace(trimmed)) return "Task";
+        var lower = trimmed.ToLowerInvariant();
+        if (lower.Contains("bug") || lower.Contains("defect") || lower.Contains("error")) return "Bug";
+        if (lower.Contains("story") || lower.Contains("user story")) return "Story";
+        if (lower.Contains("epic") || lower.Contains("initiative")) return "Epic";
+        return "Task";
     }
 
     public static List<string> GetCandidateDownloadUrls(string url)
@@ -972,8 +1008,10 @@ public class SheetDataService : ISheetDataService
         var urls = new List<string>();
         url = url.Trim();
 
-        // 1. SharePoint / OneDrive: Append ?download=1 or &download=1
-        if (url.Contains("sharepoint.com") || url.Contains("1drv.ms") || url.Contains("onedrive.live.com"))
+        // 1. SharePoint / OneDrive / Office 365
+        if (url.Contains("sharepoint.com", StringComparison.OrdinalIgnoreCase) ||
+            url.Contains("1drv.ms", StringComparison.OrdinalIgnoreCase) ||
+            url.Contains("onedrive.live.com", StringComparison.OrdinalIgnoreCase))
         {
             if (url.Contains("?"))
             {
@@ -987,23 +1025,57 @@ public class SheetDataService : ISheetDataService
         }
 
         // 2. Google Sheets
-        if (url.Contains("docs.google.com/spreadsheets"))
+        if (url.Contains("docs.google.com/spreadsheets", StringComparison.OrdinalIgnoreCase))
         {
+            var matchGid = Regex.Match(url, @"[#&?]gid=([0-9]+)");
+            var gidParam = matchGid.Success ? $"&gid={matchGid.Groups[1].Value}" : "&gid=0";
+
+            // Check if published to web link: /d/e/2PACX.../
+            var matchPublished = Regex.Match(url, @"docs\.google\.com/spreadsheets/d/e/([a-zA-Z0-9-_]+)");
+            if (matchPublished.Success)
+            {
+                var pubToken = matchPublished.Groups[1].Value;
+                urls.Add($"https://docs.google.com/spreadsheets/d/e/{pubToken}/pub?output=csv{gidParam}");
+                urls.Add($"https://docs.google.com/spreadsheets/d/e/{pubToken}/pub?gid=0&single=true&output=csv");
+            }
+
+            // Standard Google Sheet link: /d/{sheetId}/
             var matchId = Regex.Match(url, @"docs\.google\.com/spreadsheets/d/([a-zA-Z0-9-_]+)");
-            if (matchId.Success)
+            if (matchId.Success && !url.Contains("/d/e/"))
             {
                 var sheetId = matchId.Groups[1].Value;
-                var matchGid = Regex.Match(url, @"[#&?]gid=([0-9]+)");
-                var gidParam = matchGid.Success ? $"&gid={matchGid.Groups[1].Value}" : "&gid=0";
-
-                urls.Add($"https://docs.google.com/spreadsheets/d/{sheetId}/gviz/tq?tqx=out:csv{gidParam}");
                 urls.Add($"https://docs.google.com/spreadsheets/d/{sheetId}/export?format=csv{gidParam}");
+                urls.Add($"https://docs.google.com/spreadsheets/d/{sheetId}/gviz/tq?tqx=out:csv{gidParam}");
                 urls.Add($"https://docs.google.com/spreadsheets/d/{sheetId}/pub?output=csv{gidParam}");
             }
 
-            if (url.Contains("/pubhtml"))
+            if (url.Contains("/pubhtml", StringComparison.OrdinalIgnoreCase))
             {
                 urls.Add(url.Replace("/pubhtml", "/pub?output=csv"));
+            }
+        }
+
+        // 3. Google Drive file link
+        if (url.Contains("drive.google.com/file/d/", StringComparison.OrdinalIgnoreCase))
+        {
+            var matchDrive = Regex.Match(url, @"drive\.google\.com/file/d/([a-zA-Z0-9-_]+)");
+            if (matchDrive.Success)
+            {
+                var fileId = matchDrive.Groups[1].Value;
+                urls.Add($"https://drive.google.com/uc?export=download&id={fileId}");
+            }
+        }
+
+        // 4. Dropbox link
+        if (url.Contains("dropbox.com", StringComparison.OrdinalIgnoreCase))
+        {
+            if (url.Contains("dl=0"))
+            {
+                urls.Add(url.Replace("dl=0", "dl=1"));
+            }
+            else if (!url.Contains("dl=1"))
+            {
+                urls.Add(url.Contains("?") ? url + "&dl=1" : url + "?dl=1");
             }
         }
 
@@ -1013,15 +1085,22 @@ public class SheetDataService : ISheetDataService
 
     private static string? ExtractSheetNameFromUrl(string url)
     {
-        if (url.Contains("BugsList", StringComparison.OrdinalIgnoreCase))
+        if (url.Contains("docs.google.com/spreadsheets", StringComparison.OrdinalIgnoreCase))
         {
-            return "Ringnet Bugs List";
+            return "Connected Google Sheet";
         }
-        var match = Regex.Match(url, @"docs\.google\.com/spreadsheets/d/([a-zA-Z0-9-_]+)");
-        if (match.Success)
+        if (url.Contains("sharepoint.com", StringComparison.OrdinalIgnoreCase) || url.Contains("onedrive", StringComparison.OrdinalIgnoreCase))
         {
-            return $"Google Sheet ({match.Groups[1].Value[..Math.Min(8, match.Groups[1].Value.Length)]})";
+            return "Connected Excel Online Sheet";
         }
-        return "Live Sheet Data";
+        if (url.Contains(".csv", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Connected CSV Sheet";
+        }
+        if (url.Contains(".xlsx", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Connected Excel Sheet";
+        }
+        return "Connected Cloud Sheet";
     }
 }

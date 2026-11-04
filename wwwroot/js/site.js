@@ -12,6 +12,8 @@ document.addEventListener("DOMContentLoaded", function () {
     initKeyboardShortcuts();
     initSearchFilter();
     initMultiFilters();
+    initApplySearchButton();
+    initImportSheetModal();
     initIssueDetailModal();
     initCopyKeyButton();
     initTableSorting();
@@ -161,6 +163,8 @@ function refreshGLightbox() {
 // --------------------------------------------------------------------------
 // 5. Client-Side Instant Search Filter
 // --------------------------------------------------------------------------
+// 5. Client-Side Instant Search Filter
+// --------------------------------------------------------------------------
 function initSearchFilter() {
     const searchInput = document.getElementById("clientSearchInput");
     const clearBtn = document.getElementById("searchClearBtn");
@@ -171,30 +175,134 @@ function initSearchFilter() {
         if (clearBtn) {
             clearBtn.style.display = query.length > 0 ? "block" : "none";
         }
-        applyClientFilters();
+        applyClientFilters(false);
     });
 
     if (clearBtn) {
         clearBtn.addEventListener("click", function () {
             searchInput.value = "";
             clearBtn.style.display = "none";
-            applyClientFilters();
+            applyClientFilters(false);
             searchInput.focus();
         });
     }
 }
 
 // --------------------------------------------------------------------------
-// 6. Multi-Select Filter System (Status, Assignee, Priority, Types, Photos)
+// 6. Explicit Search & Apply Filters Button (Toolbar + Dropdowns)
+// --------------------------------------------------------------------------
+function initApplySearchButton() {
+    // 1. Primary Search Button in toolbar
+    const searchBtn = document.getElementById("applyFiltersSearchBtn");
+    if (searchBtn) {
+        searchBtn.addEventListener("click", function () {
+            applyClientFilters(true);
+        });
+    }
+
+    // 2. Pressing Enter inside search bar triggers search with toast
+    const searchInput = document.getElementById("clientSearchInput");
+    if (searchInput) {
+        searchInput.addEventListener("keydown", function (e) {
+            if (e.key === "Enter") {
+                e.preventDefault();
+                applyClientFilters(true);
+            }
+        });
+    }
+
+    // 3. "Apply" buttons inside dropdown menus
+    document.querySelectorAll(".apply-dropdown-filter-btn").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+            const dropdownEl = this.closest(".jira-filter-dropdown");
+            if (dropdownEl) {
+                const toggleBtn = dropdownEl.querySelector('[data-bs-toggle="dropdown"]');
+                if (toggleBtn) {
+                    const bsDropdown = bootstrap.Dropdown.getInstance(toggleBtn);
+                    if (bsDropdown) {
+                        bsDropdown.hide();
+                    }
+                }
+            }
+            applyClientFilters(true);
+        });
+    });
+}
+
+// --------------------------------------------------------------------------
+// 7. Generic "Connect Sheet / Paste Link" Modal Helper
+// --------------------------------------------------------------------------
+function initImportSheetModal() {
+    const modalEl = document.getElementById("importSheetModal");
+    if (!modalEl) return;
+
+    // Auto-focus URL input on open
+    modalEl.addEventListener("shown.bs.modal", function () {
+        const input = document.getElementById("modalSheetUrlInput");
+        if (input) {
+            input.focus();
+            input.select();
+        }
+    });
+
+    // 1-Click "Paste from Clipboard" button
+    const pasteBtn = document.getElementById("pasteClipboardBtn");
+    if (pasteBtn) {
+        pasteBtn.addEventListener("click", async function () {
+            try {
+                if (navigator.clipboard && navigator.clipboard.readText) {
+                    const text = await navigator.clipboard.readText();
+                    if (text && (text.trim().startsWith("http://") || text.trim().startsWith("https://"))) {
+                        const input = document.getElementById("modalSheetUrlInput");
+                        if (input) {
+                            input.value = text.trim();
+                            showJiraToast("Pasted sheet link from clipboard!", true);
+                            input.focus();
+                        }
+                    } else if (text && text.trim().length > 0) {
+                        const input = document.getElementById("modalSheetUrlInput");
+                        if (input) {
+                            input.value = text.trim();
+                            showJiraToast("Pasted text into link field.", true);
+                        }
+                    } else {
+                        showJiraToast("Clipboard does not contain a link. Please copy a link first.", false);
+                    }
+                } else {
+                    showJiraToast("Clipboard access unavailable. Please press Ctrl+V to paste.", false);
+                }
+            } catch (err) {
+                showJiraToast("Please press Ctrl+V to paste your link directly.", false);
+            }
+        });
+    }
+
+    // Form submit loading indicator
+    const form = document.getElementById("importUrlForm");
+    const submitBtn = document.getElementById("fetchSheetSubmitBtn");
+    if (form && submitBtn) {
+        form.addEventListener("submit", function () {
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Fetching Sheet...';
+        });
+    }
+}
+
+// --------------------------------------------------------------------------
+// 8. Multi-Select Filter System (Status, Assignee, Priority, Types, Photos)
 // --------------------------------------------------------------------------
 function initMultiFilters() {
     document.querySelectorAll(".jira-filter-dropdown .filter-checkbox").forEach(function (cb) {
         cb.addEventListener("change", function () {
-            applyClientFilters();
+            const dropdown = this.closest(".jira-filter-dropdown");
+            if (dropdown) updateDropdownCounter(dropdown);
+            applyClientFilters(false);
         });
     });
 
     document.querySelectorAll(".jira-filter-dropdown").forEach(function (dropdown) {
+        updateDropdownCounter(dropdown);
+
         const searchInput = dropdown.querySelector(".jira-filter-search");
         const optionsList = dropdown.querySelector(".jira-filter-options-list");
         if (searchInput && optionsList) {
@@ -213,7 +321,8 @@ function initMultiFilters() {
                 optionsList.querySelectorAll(".jira-filter-option:not([style*='display: none']) .filter-checkbox").forEach(function (cb) {
                     cb.checked = true;
                 });
-                applyClientFilters();
+                updateDropdownCounter(dropdown);
+                applyClientFilters(false);
             });
         }
 
@@ -223,7 +332,8 @@ function initMultiFilters() {
                 optionsList.querySelectorAll(".filter-checkbox").forEach(function (cb) {
                     cb.checked = false;
                 });
-                applyClientFilters();
+                updateDropdownCounter(dropdown);
+                applyClientFilters(false);
             });
         }
     });
@@ -235,8 +345,17 @@ function initMultiFilters() {
             const isCurrentlyOn = photosHidden.value === "true";
             photosHidden.value = isCurrentlyOn ? "false" : "true";
             photosBtn.classList.toggle("active", !isCurrentlyOn);
-            applyClientFilters();
+            applyClientFilters(true);
         });
+    }
+}
+
+function updateDropdownCounter(dropdown) {
+    if (!dropdown) return;
+    const count = dropdown.querySelectorAll(".filter-checkbox:checked").length;
+    const counter = dropdown.querySelector(".dropdown-selected-counter");
+    if (counter) {
+        counter.textContent = `${count} selected`;
     }
 }
 
@@ -281,7 +400,7 @@ function clearAllFilters() {
     applyClientFilters();
 }
 
-function applyClientFilters() {
+function applyClientFilters(notify = false) {
     const searchInput = document.getElementById("clientSearchInput");
     const searchQuery = searchInput ? searchInput.value.trim().toLowerCase() : "";
 
@@ -385,6 +504,10 @@ function applyClientFilters() {
 
     updateActiveChipsBar(searchQuery, selectedStatuses, selectedAssignees, selectedPriorities, selectedTypes, photosOnly);
     syncUrlParams(searchQuery, selectedStatuses, selectedAssignees, selectedPriorities, selectedTypes, photosOnly);
+
+    if (notify) {
+        showJiraToast(`Filters applied: ${totalVisible} card${totalVisible === 1 ? '' : 's'} displayed.`, true);
+    }
 }
 
 function getCheckedValues(name) {

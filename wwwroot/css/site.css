@@ -423,6 +423,13 @@ body {
   color: #de350b;
 }
 
+.btn-xs {
+  padding: 0.15rem 0.5rem;
+  font-size: 0.74rem;
+  line-height: 1.25;
+  border-radius: 3px;
+}
+
 .btn-jira-primary {
   background-color: var(--jira-primary);
   color: #ffffff;
