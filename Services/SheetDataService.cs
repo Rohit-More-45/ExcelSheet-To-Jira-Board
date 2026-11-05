@@ -403,15 +403,16 @@ public class SheetDataService : ISheetDataService
         isHtml = false;
         if (!File.Exists(filePath)) return false;
 
-        using var fs = File.OpenRead(filePath);
-        if (fs.Length == 0) return false;
+        var fileInfo = new FileInfo(filePath);
+        if (fileInfo.Length < 10) return false;
 
-        byte[] header = new byte[Math.Min(fs.Length, 1024)];
+        using var fs = File.OpenRead(filePath);
+        byte[] header = new byte[Math.Min(fs.Length, 2048)];
         int read = fs.Read(header, 0, header.Length);
         if (read < 4) return false;
 
-        // Binary XLSX/ZIP check (PK\x03\x04)
-        if (header[0] == 0x50 && header[1] == 0x4B && header[2] == 0x03 && header[3] == 0x04)
+        // Binary XLSX/ZIP check (PK\x03\x04 or PK..)
+        if (header[0] == 0x50 && header[1] == 0x4B)
         {
             return true;
         }
@@ -429,6 +430,25 @@ public class SheetDataService : ISheetDataService
             return false;
         }
 
+        // Must NOT be an HTTP error response
+        if (snippet.StartsWith("404", StringComparison.OrdinalIgnoreCase) ||
+            snippet.StartsWith("403", StringComparison.OrdinalIgnoreCase) ||
+            snippet.StartsWith("401", StringComparison.OrdinalIgnoreCase) ||
+            snippet.StartsWith("500", StringComparison.OrdinalIgnoreCase) ||
+            snippet.Contains("FILE NOT FOUND", StringComparison.OrdinalIgnoreCase) ||
+            snippet.Contains("Access denied", StringComparison.OrdinalIgnoreCase) ||
+            snippet.Contains("Unauthorized", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        // CSV should contain at least one newline, comma, tab, or semicolon
+        if (!snippet.Contains('\n') && !snippet.Contains('\r') &&
+            !snippet.Contains(',') && !snippet.Contains('\t') && !snippet.Contains(';'))
+        {
+            return false;
+        }
+
         return true;
     }
 
@@ -442,7 +462,7 @@ public class SheetDataService : ISheetDataService
             var startInfo = new ProcessStartInfo
             {
                 FileName = "curl.exe",
-                Arguments = $"-L -s -k --max-time {timeoutSeconds} -c \"{cookieFile}\" -b \"{cookieFile}\" -A \"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36\" -o \"{tempFile}\" \"{exportUrl}\"",
+                Arguments = $"-L -s -k -f --max-time {timeoutSeconds} -c \"{cookieFile}\" -b \"{cookieFile}\" -A \"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36\" -o \"{tempFile}\" \"{exportUrl}\"",
                 CreateNoWindow = true,
                 UseShellExecute = false,
                 RedirectStandardError = true
@@ -454,15 +474,15 @@ public class SheetDataService : ISheetDataService
                 proc.WaitForExit((timeoutSeconds + 5) * 1000);
                 try { if (File.Exists(cookieFile)) File.Delete(cookieFile); } catch { }
 
-                if (File.Exists(tempFile))
+                if (proc.ExitCode == 0 && File.Exists(tempFile))
                 {
                     var fileInfo = new FileInfo(tempFile);
                     if (fileInfo.Length > 0)
                     {
                         return tempFile;
                     }
-                    try { File.Delete(tempFile); } catch { }
                 }
+                try { if (File.Exists(tempFile)) File.Delete(tempFile); } catch { }
             }
         }
         catch (Exception ex)
@@ -690,12 +710,36 @@ public class SheetDataService : ISheetDataService
 
     public List<SheetIssue> ParseRowsToIssues(List<List<string>> rows, Dictionary<int, List<string>> rowToImages)
     {
-        if (rows.Count < 2)
+        if (rows == null || rows.Count == 0)
         {
             return new List<SheetIssue>();
         }
 
-        var headers = rows[0].Select(h => h.Trim()).ToList();
+        // Dynamically find the header row (usually row 0, but can be row 1 or 2 if there's a title block)
+        int headerRowIdx = 0;
+        int maxHeaderMatches = 0;
+
+        for (int i = 0; i < Math.Min(rows.Count, 5); i++)
+        {
+            int matches = 0;
+            foreach (var cell in rows[i])
+            {
+                var lower = cell?.Trim().ToLowerInvariant() ?? "";
+                if (lower == "key" || lower == "title" || lower == "status" || lower == "priority" ||
+                    lower == "assignee" || lower == "bug" || lower == "task" || lower == "id" ||
+                    lower == "summary" || lower == "description" || lower == "module" || lower.Contains("status"))
+                {
+                    matches++;
+                }
+            }
+            if (matches > maxHeaderMatches)
+            {
+                maxHeaderMatches = matches;
+                headerRowIdx = i;
+            }
+        }
+
+        var headers = rows[headerRowIdx].Select(h => h?.Trim() ?? "").ToList();
         var issues = new List<SheetIssue>();
 
         bool isBugSheet = headers.Any(h => h.Contains("bug", StringComparison.OrdinalIgnoreCase));
@@ -729,8 +773,15 @@ public class SheetDataService : ISheetDataService
             }
         }
 
+        int startRow = headerRowIdx + 1;
+        // If there's only 1 row total and it has no header matches, treat it as a single data row
+        if (rows.Count == 1 && maxHeaderMatches == 0)
+        {
+            startRow = 0;
+        }
+
         int rowNum = 1;
-        for (int r = 1; r < rows.Count; r++)
+        for (int r = startRow; r < rows.Count; r++)
         {
             var row = rows[r];
             if (row.All(string.IsNullOrWhiteSpace))
