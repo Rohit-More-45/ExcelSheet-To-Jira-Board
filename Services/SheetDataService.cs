@@ -246,85 +246,96 @@ public class SheetDataService : ISheetDataService
             return (false, "URL is required.", 0);
         }
 
+        string? downloadedFilePath = null;
+        string? usedUrl = null;
+        string? lastError = null;
+
         try
         {
             var candidateUrls = GetCandidateDownloadUrls(url.Trim());
-            var cookieContainer = new CookieContainer();
-            using var handler = new HttpClientHandler
-            {
-                CookieContainer = cookieContainer,
-                AllowAutoRedirect = true,
-                MaxAutomaticRedirections = 10,
-                AutomaticDecompression = DecompressionMethods.All
-            };
 
-            using var client = new HttpClient(handler);
-            client.Timeout = TimeSpan.FromSeconds(25);
-            client.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36");
-            client.DefaultRequestHeaders.TryAddWithoutValidation("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv,*/*;q=0.8");
-            client.DefaultRequestHeaders.TryAddWithoutValidation("Accept-Language", "en-US,en;q=0.9");
-
-            byte[]? downloadedBytes = null;
-            string? usedUrl = null;
-            string? lastError = null;
-
-            foreach (var exportUrl in candidateUrls)
-            {
-                try
-                {
-                    _logger.LogInformation("Attempting to fetch sheet from: {ExportUrl}", exportUrl);
-                    var response = await client.GetAsync(exportUrl);
-                    if (response.IsSuccessStatusCode)
-                    {
-                        var bytes = await response.Content.ReadAsByteArrayAsync();
-                        if (bytes.Length > 0)
-                        {
-                            if (IsValidSpreadsheetBytes(bytes, out var isHtml))
-                            {
-                                downloadedBytes = bytes;
-                                usedUrl = exportUrl;
-                                break;
-                            }
-                            else if (isHtml)
-                            {
-                                lastError = "HTML login page returned instead of raw data.";
-                            }
-                        }
-                    }
-                    else
-                    {
-                        lastError = $"HTTP {(int)response.StatusCode}: {response.ReasonPhrase}";
-                    }
-                }
-                catch (Exception ex)
-                {
-                    lastError = ex.Message;
-                }
-            }
-
-            // Fallback: Try curl.exe on Windows if HttpClient failed or returned HTML
-            if (downloadedBytes == null && RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            // 1. For SharePoint / OneDrive or on Windows: Use native curl with cookie jar FIRST
+            // This natively handles SharePoint FedAuth cookies on relative redirects and large files
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
                 foreach (var exportUrl in candidateUrls)
                 {
-                    var curlBytes = TryDownloadWithCurl(exportUrl);
-                    if (curlBytes != null && curlBytes.Length > 0)
+                    _logger.LogInformation("Attempting download via curl: {ExportUrl}", exportUrl);
+                    var tempFile = TryDownloadWithCurlToFile(exportUrl, timeoutSeconds: 120);
+                    if (tempFile != null)
                     {
-                        if (IsValidSpreadsheetBytes(curlBytes, out var isHtml))
+                        if (IsValidSpreadsheetFile(tempFile, out var isHtml))
                         {
-                            downloadedBytes = curlBytes;
+                            downloadedFilePath = tempFile;
                             usedUrl = exportUrl;
                             break;
                         }
-                        else if (isHtml)
+                        else
                         {
-                            lastError = "HTML login page returned instead of raw data.";
+                            if (isHtml) lastError = "HTML login page returned instead of raw data.";
+                            try { File.Delete(tempFile); } catch { }
                         }
                     }
                 }
             }
 
-            if (downloadedBytes == null)
+            // 2. Fallback to .NET HttpClient if curl not available or failed
+            if (downloadedFilePath == null)
+            {
+                var cookieContainer = new CookieContainer();
+                using var handler = new HttpClientHandler
+                {
+                    CookieContainer = cookieContainer,
+                    AllowAutoRedirect = true,
+                    MaxAutomaticRedirections = 10,
+                    AutomaticDecompression = DecompressionMethods.All
+                };
+
+                using var client = new HttpClient(handler);
+                client.Timeout = TimeSpan.FromMinutes(3);
+                client.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36");
+                client.DefaultRequestHeaders.TryAddWithoutValidation("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv,*/*;q=0.8");
+                client.DefaultRequestHeaders.TryAddWithoutValidation("Accept-Language", "en-US,en;q=0.9");
+
+                foreach (var exportUrl in candidateUrls)
+                {
+                    try
+                    {
+                        _logger.LogInformation("Attempting download via HttpClient: {ExportUrl}", exportUrl);
+                        using var response = await client.GetAsync(exportUrl, HttpCompletionOption.ResponseHeadersRead);
+                        if (response.IsSuccessStatusCode)
+                        {
+                            var tempFile = Path.Combine(Path.GetTempPath(), $"jira_sheet_{Guid.NewGuid():N}.tmp");
+                            using (var fileStream = File.Create(tempFile))
+                            {
+                                await response.Content.CopyToAsync(fileStream);
+                            }
+
+                            if (IsValidSpreadsheetFile(tempFile, out var isHtml))
+                            {
+                                downloadedFilePath = tempFile;
+                                usedUrl = exportUrl;
+                                break;
+                            }
+                            else
+                            {
+                                if (isHtml) lastError = "HTML login page returned instead of raw data.";
+                                try { File.Delete(tempFile); } catch { }
+                            }
+                        }
+                        else
+                        {
+                            lastError = $"HTTP {(int)response.StatusCode}: {response.ReasonPhrase}";
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        lastError = ex.Message;
+                    }
+                }
+            }
+
+            if (downloadedFilePath == null)
             {
                 var isAuthGate = lastError != null && (
                     lastError.Contains("HTML login page", StringComparison.OrdinalIgnoreCase) ||
@@ -340,58 +351,73 @@ public class SheetDataService : ISheetDataService
                 return (false, $"Unable to fetch sheet data ({lastError ?? "Access restricted"}). Please ensure the link is publicly accessible or upload your .xlsx file directly.", 0);
             }
 
-            // Detect binary XLSX (PK..) or CSV text
-            if (downloadedBytes.Length >= 4 &&
-                downloadedBytes[0] == 0x50 && downloadedBytes[1] == 0x4B &&
-                downloadedBytes[2] == 0x03 && downloadedBytes[3] == 0x04)
+            // Inspect downloaded file and import
+            (bool Success, string Message, int Count) result;
+            var isXlsx = false;
+
+            using (var fs = File.OpenRead(downloadedFilePath))
             {
-                using var ms = new MemoryStream(downloadedBytes);
-                var sheetName = ExtractSheetNameFromUrl(url) ?? "Excel Online Sheet";
-                var result = await ImportXlsxAsync(ms, sheetName);
-                if (result.Success)
+                byte[] header = new byte[4];
+                int read = fs.Read(header, 0, 4);
+                if (read == 4 && header[0] == 0x50 && header[1] == 0x4B && header[2] == 0x03 && header[3] == 0x04)
                 {
-                    lock (_lock)
-                    {
-                        _configuredUrl = url.Trim();
-                    }
+                    isXlsx = true;
                 }
-                return result;
+            }
+
+            var sheetName = ExtractSheetNameFromUrl(url) ?? "Excel Online Sheet";
+
+            if (isXlsx)
+            {
+                using var fs = File.OpenRead(downloadedFilePath);
+                result = await ImportXlsxAsync(fs, sheetName);
             }
             else
             {
-                var text = Encoding.UTF8.GetString(downloadedBytes);
-                var sheetName = ExtractSheetNameFromUrl(url) ?? "Cloud Sheet";
-                var result = await ImportCsvAsync(text, sheetName);
-                if (result.Success)
-                {
-                    lock (_lock)
-                    {
-                        _configuredUrl = url.Trim();
-                    }
-                }
-                return result;
+                var text = await File.ReadAllTextAsync(downloadedFilePath, Encoding.UTF8);
+                result = await ImportCsvAsync(text, sheetName);
             }
+
+            try { File.Delete(downloadedFilePath); } catch { }
+
+            if (result.Success)
+            {
+                lock (_lock)
+                {
+                    _configuredUrl = url.Trim();
+                }
+            }
+
+            return result;
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to import from URL {Url}", url);
+            try { if (downloadedFilePath != null && File.Exists(downloadedFilePath)) File.Delete(downloadedFilePath); } catch { }
             return (false, $"Error fetching URL: {ex.Message}", 0);
         }
     }
 
-    private static bool IsValidSpreadsheetBytes(byte[] bytes, out bool isHtml)
+    private static bool IsValidSpreadsheetFile(string filePath, out bool isHtml)
     {
         isHtml = false;
-        if (bytes == null || bytes.Length == 0) return false;
+        if (!File.Exists(filePath)) return false;
+
+        using var fs = File.OpenRead(filePath);
+        if (fs.Length == 0) return false;
+
+        byte[] header = new byte[Math.Min(fs.Length, 1024)];
+        int read = fs.Read(header, 0, header.Length);
+        if (read < 4) return false;
 
         // Binary XLSX/ZIP check (PK\x03\x04)
-        if (bytes.Length >= 4 && bytes[0] == 0x50 && bytes[1] == 0x4B && bytes[2] == 0x03 && bytes[3] == 0x04)
+        if (header[0] == 0x50 && header[1] == 0x4B && header[2] == 0x03 && header[3] == 0x04)
         {
             return true;
         }
 
         // Text check for HTML login or viewer pages
-        var snippet = Encoding.UTF8.GetString(bytes.Take(Math.Min(bytes.Length, 500)).ToArray());
+        var snippet = Encoding.UTF8.GetString(header, 0, read);
         if (snippet.Contains("<!DOCTYPE html", StringComparison.OrdinalIgnoreCase) ||
             snippet.Contains("<html", StringComparison.OrdinalIgnoreCase) ||
             snippet.Contains("<head", StringComparison.OrdinalIgnoreCase) ||
@@ -406,15 +432,17 @@ public class SheetDataService : ISheetDataService
         return true;
     }
 
-    private byte[]? TryDownloadWithCurl(string exportUrl)
+    private string? TryDownloadWithCurlToFile(string exportUrl, int timeoutSeconds = 120)
     {
+        var tempFile = Path.Combine(Path.GetTempPath(), $"jira_sheet_{Guid.NewGuid():N}.tmp");
+        var cookieFile = Path.Combine(Path.GetTempPath(), $"jira_cookie_{Guid.NewGuid():N}.txt");
+
         try
         {
-            var tempFile = Path.Combine(Path.GetTempPath(), $"jira_sheet_{Guid.NewGuid():N}.tmp");
             var startInfo = new ProcessStartInfo
             {
                 FileName = "curl.exe",
-                Arguments = $"-L -s -k --max-time 15 -A \"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36\" -o \"{tempFile}\" \"{exportUrl}\"",
+                Arguments = $"-L -s -k --max-time {timeoutSeconds} -c \"{cookieFile}\" -b \"{cookieFile}\" -A \"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36\" -o \"{tempFile}\" \"{exportUrl}\"",
                 CreateNoWindow = true,
                 UseShellExecute = false,
                 RedirectStandardError = true
@@ -423,18 +451,25 @@ public class SheetDataService : ISheetDataService
             using var proc = Process.Start(startInfo);
             if (proc != null)
             {
-                proc.WaitForExit(16000);
+                proc.WaitForExit((timeoutSeconds + 5) * 1000);
+                try { if (File.Exists(cookieFile)) File.Delete(cookieFile); } catch { }
+
                 if (File.Exists(tempFile))
                 {
-                    var bytes = File.ReadAllBytes(tempFile);
+                    var fileInfo = new FileInfo(tempFile);
+                    if (fileInfo.Length > 0)
+                    {
+                        return tempFile;
+                    }
                     try { File.Delete(tempFile); } catch { }
-                    if (bytes.Length > 0) return bytes;
                 }
             }
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "Curl fallback failed for {Url}", exportUrl);
+            _logger.LogDebug(ex, "Curl download failed for {Url}", exportUrl);
+            try { if (File.Exists(cookieFile)) File.Delete(cookieFile); } catch { }
+            try { if (File.Exists(tempFile)) File.Delete(tempFile); } catch { }
         }
         return null;
     }
