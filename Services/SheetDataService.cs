@@ -1025,23 +1025,38 @@ public class SheetDataService : ISheetDataService
             url.Contains("1drv.ms", StringComparison.OrdinalIgnoreCase) ||
             url.Contains("onedrive.live.com", StringComparison.OrdinalIgnoreCase))
         {
-            // Normalize SharePoint web viewer /:x:/r/ or /:w:/r/ or /:p:/r/ to direct guest download /:x:/g/
-            var directUrl = Regex.Replace(url, @"/:[xwpb]:/r/", "/:x:/g/", RegexOptions.IgnoreCase);
-
-            // Strip tracking query parameters (rtime, CID, wdLOR, csf, web, etc.)
-            var cleanBase = Regex.Replace(directUrl, @"\?.*$", "");
-
-            // Primary candidate: Clean direct URL with ?download=1
-            urls.Add(cleanBase + "?download=1");
-
-            // Secondary candidate: Direct URL with &download=1
-            if (directUrl.Contains("?"))
+            var variants = new List<string> { url };
+            if (url.Contains("esluk_com", StringComparison.OrdinalIgnoreCase))
             {
-                urls.Add(directUrl + "&download=1");
+                variants.Add(url.Replace("esluk_com", "esl-uk_com", StringComparison.OrdinalIgnoreCase));
             }
-            else
+            if (url.Contains("esl-uk_com", StringComparison.OrdinalIgnoreCase))
             {
-                urls.Add(directUrl + "?download=1");
+                variants.Add(url.Replace("esl-uk_com", "esluk_com", StringComparison.OrdinalIgnoreCase));
+            }
+
+            foreach (var v in variants)
+            {
+                // A. Strip /:[xwpb]:/r/ completely (converts browser reader URL into direct document library path)
+                var noReader = Regex.Replace(v, @"/:[xwpb]:/r/", "/", RegexOptions.IgnoreCase);
+                var cleanNoReader = Regex.Replace(noReader, @"\?.*$", "");
+                urls.Add(cleanNoReader + "?download=1");
+
+                // B. Convert /:[xwpb]:/r/ to /:x:/g/ (converts browser reader URL to sharing token URL)
+                var withGuest = Regex.Replace(v, @"/:[xwpb]:/r/", "/:x:/g/", RegexOptions.IgnoreCase);
+                var cleanWithGuest = Regex.Replace(withGuest, @"\?.*$", "");
+                urls.Add(cleanWithGuest + "?download=1");
+
+                // C. Clean direct URL with ?download=1
+                var cleanBase = Regex.Replace(v, @"\?.*$", "");
+                urls.Add(cleanBase + "?download=1");
+
+                // D. Direct URL with &download=1
+                if (v.Contains("?"))
+                {
+                    urls.Add(noReader + (noReader.Contains("?") ? "&download=1" : "?download=1"));
+                    urls.Add(v + "&download=1");
+                }
             }
 
             // Tertiary candidate: onedrive.live.com
