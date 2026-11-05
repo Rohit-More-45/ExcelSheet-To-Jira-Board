@@ -2,8 +2,8 @@
 title Live Sheet Jira Board - Viewer
 echo ========================================================
 echo   Live Sheet Jira Board - Viewer
-echo   Zero Dummy Data - 544 Live Issues with Real Photos
-echo   GLightbox HD Viewer - Compact Read-Only Interface
+echo   100%% Generic: Driven Entirely by User-Entered Link
+echo   Zero Hardcoded Links - Streamlined Jira Interface
 echo ========================================================
 echo.
 echo Building latest changes...
