@@ -15,6 +15,7 @@ Data/sheet.xlsx
 Data/sheet.csv
 Data/metadata.json
 Data/active-issues.json
+wwwroot/media/
 cookies.txt
 *.cookie
 *.cookies

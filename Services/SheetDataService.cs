@@ -15,8 +15,6 @@ public class SheetDataService : ISheetDataService
     private readonly ILogger<SheetDataService> _logger;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly string _dataDirectory;
-    private readonly string _activeDataFilePath;
-    private readonly string _metadataFilePath;
     private readonly string _mediaDirectory;
 
     private List<SheetIssue> _cachedIssues = new();
@@ -45,9 +43,6 @@ public class SheetDataService : ISheetDataService
         {
             Directory.CreateDirectory(_mediaDirectory);
         }
-
-        _activeDataFilePath = Path.Combine(_dataDirectory, "active-issues.json");
-        _metadataFilePath = Path.Combine(_dataDirectory, "metadata.json");
 
         InitializeData();
     }
@@ -205,7 +200,6 @@ public class SheetDataService : ISheetDataService
                 _cachedIssues = parsed;
                 _sourceName = sourceName;
                 _lastUpdated = DateTime.Now;
-                SaveToDisk();
             }
 
             return Task.FromResult((true, $"Successfully loaded {parsed.Count} live issues with {parsed.Count(p => p.HasPhoto)} photos.", parsed.Count));
@@ -232,7 +226,6 @@ public class SheetDataService : ISheetDataService
                 _cachedIssues = parsed;
                 _sourceName = sourceName;
                 _lastUpdated = DateTime.Now;
-                SaveToDisk();
             }
 
             return Task.FromResult((true, $"Successfully loaded {parsed.Count} live issues with {parsed.Count(p => p.HasPhoto)} photos from Excel.", parsed.Count));
@@ -317,29 +310,29 @@ public class SheetDataService : ISheetDataService
                 downloadedBytes[0] == 0x50 && downloadedBytes[1] == 0x4B &&
                 downloadedBytes[2] == 0x03 && downloadedBytes[3] == 0x04)
             {
-                // Save locally to Data/sheet.xlsx
-                var localXlsx = Path.Combine(_dataDirectory, "sheet.xlsx");
-                await File.WriteAllBytesAsync(localXlsx, downloadedBytes);
-
                 using var ms = new MemoryStream(downloadedBytes);
-                var sheetName = ExtractSheetNameFromUrl(url) ?? "Live Excel Sheet";
+                var sheetName = ExtractSheetNameFromUrl(url) ?? "Excel Online Sheet";
                 var result = await ImportXlsxAsync(ms, sheetName);
                 if (result.Success)
                 {
-                    _configuredUrl = url.Trim();
-                    SaveToDisk();
+                    lock (_lock)
+                    {
+                        _configuredUrl = url.Trim();
+                    }
                 }
                 return result;
             }
             else
             {
                 var text = Encoding.UTF8.GetString(downloadedBytes);
-                var sheetName = ExtractSheetNameFromUrl(url) ?? "Live CSV Sheet";
+                var sheetName = ExtractSheetNameFromUrl(url) ?? "Cloud Sheet";
                 var result = await ImportCsvAsync(text, sheetName);
                 if (result.Success)
                 {
-                    _configuredUrl = url.Trim();
-                    SaveToDisk();
+                    lock (_lock)
+                    {
+                        _configuredUrl = url.Trim();
+                    }
                 }
                 return result;
             }
@@ -351,83 +344,26 @@ public class SheetDataService : ISheetDataService
         }
     }
 
-    public async Task ResetToSampleDataAsync()
+    public Task ResetToSampleDataAsync()
     {
-        if (!string.IsNullOrWhiteSpace(_configuredUrl))
-        {
-            await ImportFromUrlAsync(_configuredUrl);
-            return;
-        }
-
         lock (_lock)
         {
             _cachedIssues = new List<SheetIssue>();
             _sourceName = "No Sheet Connected";
             _configuredUrl = null;
             _lastUpdated = DateTime.Now;
-            SaveToDisk();
         }
+        return Task.CompletedTask;
     }
 
     private void InitializeData()
     {
         lock (_lock)
         {
-            try
-            {
-                // Load user-entered link and session metadata if previously saved
-                if (File.Exists(_metadataFilePath))
-                {
-                    var meta = JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText(_metadataFilePath));
-                    if (meta != null)
-                    {
-                        if (meta.TryGetValue("sourceName", out var sName) && !string.IsNullOrWhiteSpace(sName)) _sourceName = sName;
-                        if (meta.TryGetValue("configuredUrl", out var cUrl) && !string.IsNullOrWhiteSpace(cUrl)) _configuredUrl = cUrl.Trim();
-                    }
-                }
-
-                // If user has configured a link or imported data, load their cached issues
-                if (!string.IsNullOrWhiteSpace(_configuredUrl) && File.Exists(_activeDataFilePath))
-                {
-                    var json = File.ReadAllText(_activeDataFilePath);
-                    var list = JsonSerializer.Deserialize<List<SheetIssue>>(json);
-                    if (list != null && list.Any())
-                    {
-                        _cachedIssues = list;
-                        return;
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to load user sheet data from disk");
-            }
-
             _cachedIssues = new List<SheetIssue>();
             _sourceName = "No Sheet Connected";
             _configuredUrl = null;
             _lastUpdated = DateTime.Now;
-        }
-    }
-
-    private void SaveToDisk()
-    {
-        try
-        {
-            var json = JsonSerializer.Serialize(_cachedIssues, new JsonSerializerOptions { WriteIndented = true });
-            File.WriteAllText(_activeDataFilePath, json, Encoding.UTF8);
-
-            var meta = new Dictionary<string, string>
-            {
-                ["sourceName"] = _sourceName,
-                ["lastUpdated"] = _lastUpdated.ToString("o"),
-                ["configuredUrl"] = _configuredUrl ?? ""
-            };
-            File.WriteAllText(_metadataFilePath, JsonSerializer.Serialize(meta), Encoding.UTF8);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to save active issues to disk");
         }
     }
 

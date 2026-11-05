@@ -230,6 +230,15 @@ public class HomeController : Controller
 
     [HttpPost]
     [ValidateAntiForgeryToken]
+    public async Task<IActionResult> Disconnect()
+    {
+        await _sheetService.ResetToSampleDataAsync();
+        TempData["SuccessMessage"] = "Sheet disconnected. Enter any sheet link to load a new board.";
+        return RedirectToAction(nameof(Index));
+    }
+
+    [HttpPost]
+    [ValidateAntiForgeryToken]
     public async Task<IActionResult> ResetSample()
     {
         await _sheetService.ResetToSampleDataAsync();

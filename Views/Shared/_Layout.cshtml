@@ -21,36 +21,44 @@
                 </a>
 
                 <div class="d-flex align-items-center gap-2 ms-2 me-auto">
-                    <span class="jira-view-only-badge" title="Safe Read-Only Viewer (No edits permitted)">
+                    <span class="jira-view-only-badge" title="Read-Only Interactive Viewer">
                         <i class="bi bi-shield-check text-primary"></i> View Only
                     </span>
-                    <span class="jira-badge-source text-truncate d-none d-md-inline-flex" title="Loaded Live Source">
-                        <i class="bi bi-file-earmark-spreadsheet-fill"></i> @SheetService.GetCurrentSourceName()
-                    </span>
-                </div>
-
-                <div class="d-flex align-items-center gap-1">
                     @if (!string.IsNullOrWhiteSpace(SheetService.GetConfiguredUrl()))
                     {
-                        <a href="@SheetService.GetConfiguredUrl()" target="_blank" rel="noopener noreferrer" class="btn btn-sm btn-jira-excel" title="View live workbook in Microsoft Excel Online">
-                            <i class="bi bi-file-earmark-excel-fill text-success"></i> Excel Online <i class="bi bi-box-arrow-up-right small ms-1 opacity-75"></i>
-                        </a>
+                        <span class="jira-badge-source text-truncate d-none d-md-inline-flex" title="Data Source">
+                            <i class="bi bi-file-earmark-spreadsheet-fill"></i> @SheetService.GetCurrentSourceName()
+                        </span>
+                    }
+                </div>
 
+                <div class="d-flex align-items-center gap-2">
+                    @if (!string.IsNullOrWhiteSpace(SheetService.GetConfiguredUrl()))
+                    {
                         <form asp-action="Sync" method="post" class="d-inline">
                             @Html.AntiForgeryToken()
-                            <button type="submit" class="btn btn-sm btn-jira-primary" title="Fetch fresh live data directly from SharePoint / Excel Online">
-                                <i class="bi bi-arrow-repeat"></i> Sync Live Sheet
+                            <button type="submit" class="btn btn-sm btn-jira-primary py-1" title="Refresh sheet from user link">
+                                <i class="bi bi-arrow-repeat"></i> Sync
+                            </button>
+                        </form>
+
+                        <a asp-action="ExportCsv" class="btn btn-sm btn-jira-subtle py-1" title="Download active dataset as CSV">
+                            <i class="bi bi-download"></i> Export
+                        </a>
+
+                        <form asp-action="Disconnect" method="post" class="d-inline">
+                            @Html.AntiForgeryToken()
+                            <button type="submit" class="btn btn-sm btn-outline-secondary py-1" title="Disconnect and load another sheet">
+                                <i class="bi bi-x-circle me-1"></i> Change Sheet
                             </button>
                         </form>
                     }
-
-                    <a asp-action="ExportCsv" class="btn btn-sm btn-jira-subtle" title="Download active dataset as CSV">
-                        <i class="bi bi-download"></i> Export CSV
-                    </a>
-
-                    <button type="button" class="btn btn-sm btn-jira-primary shadow-sm" data-bs-toggle="modal" data-bs-target="#importSheetModal" title="Connect any Google Sheet, Excel Online, SharePoint or CSV link">
-                        <i class="bi bi-link-45deg"></i> Connect Sheet / Paste Link
-                    </button>
+                    else
+                    {
+                        <button type="button" class="btn btn-sm btn-jira-primary shadow-sm py-1 px-3" data-bs-toggle="modal" data-bs-target="#importSheetModal">
+                            <i class="bi bi-link-45deg me-1"></i> Paste Sheet Link
+                        </button>
+                    }
                 </div>
             </div>
         </nav>
@@ -76,121 +84,43 @@
         @RenderBody()
     </main>
 
-    <!-- Connect / Import Google Sheet Modal -->
+    <!-- Simple Sheet Link Modal -->
     <div class="modal fade" id="importSheetModal" tabindex="-1" aria-labelledby="importSheetModalLabel" aria-hidden="true">
-        <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-dialog modal-dialog-centered" style="max-width: 560px;">
             <div class="modal-content border-0 shadow">
                 <div class="modal-header py-2 px-3 bg-light border-bottom">
                     <h6 class="modal-title fw-bold" id="importSheetModalLabel">
-                        <i class="bi bi-cloud-arrow-down text-primary me-2"></i>Connect Any Sheet / Paste Link
+                        <i class="bi bi-link-45deg text-primary me-1"></i> Connect Spreadsheet Link
                     </h6>
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
                 <div class="modal-body p-3">
-                    <p class="small text-muted mb-3">
-                        Connect any public cloud spreadsheet link. The board will automatically parse cards, workflow columns, assignees, priorities, and screenshot attachments into a live Jira Kanban board.
-                    </p>
-
-                    <ul class="nav nav-tabs mb-3" id="importTabs" role="tablist">
-                        <li class="nav-item" role="presentation">
-                            <button class="nav-link active fw-bold small" id="url-tab" data-bs-toggle="tab" data-bs-target="#tab-url" type="button" role="tab">
-                                <i class="bi bi-link-45deg me-1"></i> Paste Sheet URL
+                    <form asp-action="Import" method="post" id="importUrlForm">
+                        @Html.AntiForgeryToken()
+                        <p class="small text-muted mb-3">
+                            Paste any public link from <strong>Google Sheets</strong>, <strong>Excel Online</strong>, <strong>SharePoint</strong>, or <strong>CSV</strong>.
+                        </p>
+                        <div class="input-group mb-3">
+                            <span class="input-group-text bg-light"><i class="bi bi-link-45deg"></i></span>
+                            <input type="url" 
+                                   name="GoogleSheetUrl" 
+                                   id="modalSheetUrlInput" 
+                                   class="form-control" 
+                                   value="" 
+                                   placeholder="https://docs.google.com/spreadsheets/d/... or Excel Online link" 
+                                   required />
+                            <button type="button" class="btn btn-outline-secondary" id="pasteClipboardBtn" title="Paste link from clipboard">
+                                <i class="bi bi-clipboard"></i> Paste
                             </button>
-                        </li>
-                        <li class="nav-item" role="presentation">
-                            <button class="nav-link fw-bold small" id="upload-tab" data-bs-toggle="tab" data-bs-target="#tab-upload" type="button" role="tab">
-                                <i class="bi bi-upload me-1"></i> Upload File (.xlsx, .csv)
-                            </button>
-                        </li>
-                        <li class="nav-item" role="presentation">
-                            <button class="nav-link fw-bold small" id="paste-tab" data-bs-toggle="tab" data-bs-target="#tab-paste" type="button" role="tab">
-                                <i class="bi bi-clipboard me-1"></i> Paste Copied Rows
-                            </button>
-                        </li>
-                    </ul>
-
-                    <div class="tab-content" id="importTabContent">
-                        <!-- Tab 1: Sheet URL -->
-                        <div class="tab-pane fade show active" id="tab-url" role="tabpanel">
-                            <form asp-action="Import" method="post" id="importUrlForm">
-                                @Html.AntiForgeryToken()
-                                <div class="mb-3">
-                                    <label class="form-label fw-semibold small">Google Sheet, Excel Online, SharePoint or CSV Public Link</label>
-                                    <div class="input-group input-group-sm">
-                                        <span class="input-group-text bg-light"><i class="bi bi-link-45deg"></i></span>
-                                        <input type="url" 
-                                               name="GoogleSheetUrl" 
-                                               id="modalSheetUrlInput" 
-                                               class="form-control" 
-                                               value="@(SheetService.GetConfiguredUrl() ?? "")" 
-                                               placeholder="https://docs.google.com/spreadsheets/d/... or SharePoint / Excel Online / CSV link" 
-                                               required />
-                                        <button type="button" class="btn btn-outline-secondary" id="pasteClipboardBtn" title="Paste link from clipboard">
-                                            <i class="bi bi-clipboard"></i> Paste
-                                        </button>
-                                    </div>
-
-                                    <div class="mt-2 d-flex flex-wrap gap-1">
-                                        <span class="badge bg-light text-secondary border font-monospace small"><i class="bi bi-google text-primary me-1"></i> Google Sheets</span>
-                                        <span class="badge bg-light text-secondary border font-monospace small"><i class="bi bi-file-earmark-excel text-success me-1"></i> Excel Online / SharePoint</span>
-                                        <span class="badge bg-light text-secondary border font-monospace small"><i class="bi bi-filetype-csv text-info me-1"></i> Direct CSV / XLSX URLs</span>
-                                    </div>
-
-                                    <div class="small text-muted mt-2 ps-1 border-start border-2 border-primary">
-                                        <i class="bi bi-info-circle text-primary me-1"></i> <strong>Tip:</strong> Ensure your Google Sheet has <em>"General access: Anyone with the link can view"</em> (or <em>File &gt; Share &gt; Publish to web &gt; CSV</em>).
-                                    </div>
-                                    
-                                    @if (!string.IsNullOrWhiteSpace(SheetService.GetConfiguredUrl()))
-                                    {
-                                        <div class="alert alert-info py-1 px-2 small mt-2 mb-0 d-flex align-items-center justify-content-between">
-                                            <span class="text-truncate me-2"><i class="bi bi-link-45deg me-1"></i> Active Link: <strong>@SheetService.GetConfiguredUrl()</strong></span>
-                                            <span class="badge bg-success">Configured</span>
-                                        </div>
-                                    }
-                                </div>
-                                <div class="d-flex justify-content-end gap-2">
-                                    <button type="button" class="btn btn-sm btn-light" data-bs-dismiss="modal">Cancel</button>
-                                    <button type="submit" id="fetchSheetSubmitBtn" class="btn btn-sm btn-jira-primary fw-semibold">
-                                        <i class="bi bi-cloud-download me-1"></i> Fetch & Load Sheet
-                                    </button>
-                                </div>
-                            </form>
                         </div>
 
-                        <!-- Tab 2: File Upload -->
-                        <div class="tab-pane fade" id="tab-upload" role="tabpanel">
-                            <form asp-action="Import" method="post" enctype="multipart/form-data">
-                                @Html.AntiForgeryToken()
-                                <div class="mb-3">
-                                    <label class="form-label fw-semibold small">Choose Excel (.xlsx) or CSV (.csv)</label>
-                                    <input type="file" name="UploadFile" class="form-control form-control-sm" accept=".xlsx,.csv,.txt" required />
-                                </div>
-                                <div class="d-flex justify-content-end gap-2">
-                                    <button type="button" class="btn btn-sm btn-light" data-bs-dismiss="modal">Cancel</button>
-                                    <button type="submit" class="btn btn-sm btn-jira-primary">
-                                        <i class="bi bi-upload me-1"></i> Upload & Render
-                                    </button>
-                                </div>
-                            </form>
+                        <div class="d-flex justify-content-between align-items-center pt-2 border-top">
+                            <button type="button" class="btn btn-sm btn-light" data-bs-dismiss="modal">Cancel</button>
+                            <button type="submit" id="fetchSheetSubmitBtn" class="btn btn-sm btn-jira-primary fw-bold px-3">
+                                <i class="bi bi-cloud-download me-1"></i> Load Board
+                            </button>
                         </div>
-
-                        <!-- Tab 3: Paste Data -->
-                        <div class="tab-pane fade" id="tab-paste" role="tabpanel">
-                            <form asp-action="Import" method="post">
-                                @Html.AntiForgeryToken()
-                                <div class="mb-3">
-                                    <label class="form-label fw-semibold small">Paste copied rows (TSV or CSV)</label>
-                                    <textarea name="RawData" class="form-control form-control-sm font-monospace" rows="6" placeholder="Bug no.	Title	Status	Priority..." required></textarea>
-                                </div>
-                                <div class="d-flex justify-content-end gap-2">
-                                    <button type="button" class="btn btn-sm btn-light" data-bs-dismiss="modal">Cancel</button>
-                                    <button type="submit" class="btn btn-sm btn-jira-primary">
-                                        <i class="bi bi-check2-circle me-1"></i> Parse & Display
-                                    </button>
-                                </div>
-                            </form>
-                        </div>
-                    </div>
+                    </form>
                 </div>
             </div>
         </div>

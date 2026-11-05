@@ -3,641 +3,587 @@
     ViewData["Title"] = "Live Sheet Jira Board";
 }
 
-<!-- Project Subheader & Filter Toolbar (Compact Jira Layout) -->
-<div class="jira-toolbar-container">
-    <div class="jira-project-title-row mb-2">
-        <div class="d-flex align-items-center gap-2 flex-wrap">
-            <h1 class="jira-project-title fs-5 mb-0">
-                <i class="bi bi-kanban text-primary"></i> Live Sheet Jira Board
-            </h1>
-            <span class="jira-badge-source py-0 px-2 small" title="Data Source">
-                <i class="bi bi-file-earmark-spreadsheet-fill"></i> @Model.SheetSourceTitle
-            </span>
-            <span class="text-muted small">Updated @Model.LastUpdated.ToString("g")</span>
+@if (!Model.Issues.Any())
+{
+    <!-- WELCOME / INITIAL STATE: User Pastes Their Link Directly (No hardcoded dependency) -->
+    <div class="container py-5">
+        <div class="card border-0 shadow-sm mx-auto p-4 p-md-5 text-center" style="max-width: 640px; border-radius: 12px; background: #ffffff;">
+            <div class="mb-3">
+                <span class="d-inline-flex p-3 rounded-circle bg-primary-subtle text-primary">
+                    <i class="bi bi-kanban fs-1"></i>
+                </span>
+            </div>
+            <h3 class="fw-bold text-dark mb-2">Paste Your Spreadsheet Link</h3>
+            <p class="text-muted small mb-4">
+                Enter any public <strong>Google Sheet</strong>, <strong>Excel Online</strong>, <strong>SharePoint</strong>, or <strong>CSV</strong> link to generate your interactive Jira board.
+            </p>
 
-            @if (Model.HasConfiguredUrl)
-            {
-                <form asp-action="Sync" method="post" class="d-inline">
+            <form asp-action="Import" method="post" class="w-100">
+                @Html.AntiForgeryToken()
+                <div class="input-group mb-3 shadow-sm">
+                    <span class="input-group-text bg-white border-end-0"><i class="bi bi-link-45deg text-primary fs-5"></i></span>
+                    <input type="url" 
+                           id="homeSheetUrlInput"
+                           name="GoogleSheetUrl" 
+                           class="form-control border-start-0 py-2" 
+                           placeholder="https://docs.google.com/spreadsheets/d/... or Excel Online link" 
+                           required 
+                           autofocus />
+                    <button type="button" class="btn btn-outline-secondary px-3" id="homePasteBtn" title="Paste link from clipboard">
+                        <i class="bi bi-clipboard"></i> Paste
+                    </button>
+                    <button type="submit" class="btn btn-jira-primary px-3 fw-bold">
+                        <i class="bi bi-cloud-download me-1"></i> Load Board
+                    </button>
+                </div>
+            </form>
+
+            <div class="d-flex justify-content-center align-items-center gap-3 flex-wrap text-muted small mt-2 pt-3 border-top">
+                <span><i class="bi bi-google text-primary me-1"></i> Google Sheets</span>
+                <span><i class="bi bi-file-earmark-excel text-success me-1"></i> Excel Online / SharePoint</span>
+                <span><i class="bi bi-filetype-csv text-info me-1"></i> Public CSV / XLSX</span>
+            </div>
+        </div>
+    </div>
+}
+else
+{
+    <!-- ACTIVE BOARD STATE: Simple, Streamlined Jira Layout -->
+    <div class="jira-toolbar-container">
+        <!-- Top Row: Title, Source & View Switcher -->
+        <div class="jira-project-title-row mb-2">
+            <div class="d-flex align-items-center gap-2 flex-wrap">
+                <h1 class="jira-project-title fs-5 mb-0">
+                    <i class="bi bi-kanban text-primary"></i> Live Jira Board
+                </h1>
+                <span class="jira-badge-source py-0 px-2 small">
+                    <i class="bi bi-file-earmark-spreadsheet-fill"></i> @Model.SheetSourceTitle
+                </span>
+                <span class="text-muted small">
+                    Showing <strong id="visibleCardsCounter">@Model.TotalIssuesCount</strong> of <strong>@Model.TotalUnfilteredCount</strong> cards
+                </span>
+            </div>
+
+            <div class="d-flex align-items-center gap-2">
+                <!-- View Switcher -->
+                <div class="btn-group btn-group-sm" role="group" aria-label="View switch">
+                    <a asp-action="Index" 
+                       asp-route-view="board" 
+                       asp-route-search="@Model.CurrentSearch" 
+                       asp-route-status="@string.Join(",", Model.CurrentStatusFilters)" 
+                       asp-route-assignee="@string.Join(",", Model.CurrentAssigneeFilters)" 
+                       asp-route-priority="@string.Join(",", Model.CurrentPriorityFilters)" 
+                       asp-route-type="@string.Join(",", Model.CurrentTypeFilters)" 
+                       asp-route-withPhotos="@Model.OnlyWithPhotos" 
+                       asp-route-sortBy="@Model.CurrentSortBy"
+                       class="btn btn-jira-subtle py-1 @(Model.ActiveView == "board" ? "active" : "")">
+                        <i class="bi bi-kanban"></i> Board
+                    </a>
+                    <a asp-action="Index" 
+                       asp-route-view="table" 
+                       asp-route-search="@Model.CurrentSearch" 
+                       asp-route-status="@string.Join(",", Model.CurrentStatusFilters)" 
+                       asp-route-assignee="@string.Join(",", Model.CurrentAssigneeFilters)" 
+                       asp-route-priority="@string.Join(",", Model.CurrentPriorityFilters)" 
+                       asp-route-type="@string.Join(",", Model.CurrentTypeFilters)" 
+                       asp-route-withPhotos="@Model.OnlyWithPhotos" 
+                       asp-route-sortBy="@Model.CurrentSortBy"
+                       class="btn btn-jira-subtle py-1 @(Model.ActiveView == "table" ? "active" : "")">
+                        <i class="bi bi-table"></i> Table
+                    </a>
+                    <a asp-action="Index" 
+                       asp-route-view="gallery" 
+                       asp-route-search="@Model.CurrentSearch" 
+                       asp-route-status="@string.Join(",", Model.CurrentStatusFilters)" 
+                       asp-route-assignee="@string.Join(",", Model.CurrentAssigneeFilters)" 
+                       asp-route-priority="@string.Join(",", Model.CurrentPriorityFilters)" 
+                       asp-route-type="@string.Join(",", Model.CurrentTypeFilters)" 
+                       asp-route-withPhotos="@Model.OnlyWithPhotos" 
+                       asp-route-sortBy="@Model.CurrentSortBy"
+                       class="btn btn-jira-subtle py-1 @(Model.ActiveView == "gallery" ? "active" : "")">
+                        <i class="bi bi-grid-3x3"></i> Gallery
+                    </a>
+                </div>
+
+                <form asp-action="Disconnect" method="post" class="d-inline">
                     @Html.AntiForgeryToken()
-                    <button type="submit" class="btn btn-xs btn-jira-primary py-0 px-2" title="Refresh data directly from Cloud Sheet">
-                        <i class="bi bi-arrow-repeat"></i> Sync Live
+                    <button type="submit" class="btn btn-sm btn-outline-secondary py-1" title="Disconnect and load another sheet">
+                        <i class="bi bi-link-45deg me-1"></i> Change Link
                     </button>
                 </form>
-            }
-        </div>
-
-        <div class="d-flex align-items-center gap-2">
-            <!-- Density Toggle (Compact vs Comfortable) -->
-            <button type="button" id="densityToggleBtn" class="btn btn-sm btn-jira-subtle py-1 px-2" title="Toggle Compact / Comfortable card density">
-                <i class="bi bi-distribute-vertical"></i> <span id="densityToggleText">Compact</span>
-            </button>
-
-            <!-- View Switcher -->
-            <div class="btn-group btn-group-sm" role="group" aria-label="View switch">
-                <a asp-action="Index" 
-                   asp-route-view="board" 
-                   asp-route-search="@Model.CurrentSearch" 
-                   asp-route-status="@string.Join(",", Model.CurrentStatusFilters)" 
-                   asp-route-assignee="@string.Join(",", Model.CurrentAssigneeFilters)" 
-                   asp-route-priority="@string.Join(",", Model.CurrentPriorityFilters)" 
-                   asp-route-type="@string.Join(",", Model.CurrentTypeFilters)" 
-                   asp-route-withPhotos="@Model.OnlyWithPhotos" 
-                   asp-route-sortBy="@Model.CurrentSortBy"
-                   class="btn btn-jira-subtle py-1 @(Model.ActiveView == "board" ? "active" : "")">
-                    <i class="bi bi-kanban"></i> Board
-                </a>
-                <a asp-action="Index" 
-                   asp-route-view="table" 
-                   asp-route-search="@Model.CurrentSearch" 
-                   asp-route-status="@string.Join(",", Model.CurrentStatusFilters)" 
-                   asp-route-assignee="@string.Join(",", Model.CurrentAssigneeFilters)" 
-                   asp-route-priority="@string.Join(",", Model.CurrentPriorityFilters)" 
-                   asp-route-type="@string.Join(",", Model.CurrentTypeFilters)" 
-                   asp-route-withPhotos="@Model.OnlyWithPhotos" 
-                   asp-route-sortBy="@Model.CurrentSortBy"
-                   class="btn btn-jira-subtle py-1 @(Model.ActiveView == "table" ? "active" : "")">
-                    <i class="bi bi-table"></i> Table
-                </a>
-                <a asp-action="Index" 
-                   asp-route-view="gallery" 
-                   asp-route-search="@Model.CurrentSearch" 
-                   asp-route-status="@string.Join(",", Model.CurrentStatusFilters)" 
-                   asp-route-assignee="@string.Join(",", Model.CurrentAssigneeFilters)" 
-                   asp-route-priority="@string.Join(",", Model.CurrentPriorityFilters)" 
-                   asp-route-type="@string.Join(",", Model.CurrentTypeFilters)" 
-                   asp-route-withPhotos="@Model.OnlyWithPhotos" 
-                   asp-route-sortBy="@Model.CurrentSortBy"
-                   class="btn btn-jira-subtle py-1 @(Model.ActiveView == "gallery" ? "active" : "")">
-                    <i class="bi bi-grid-3x3"></i> Gallery
-                </a>
-            </div>
-        </div>
-    </div>
-
-    <!-- Filter Form with Multi-Select Filters (Compact Row) -->
-    <form id="filterForm" method="get" asp-action="Index" class="jira-filter-bar">
-        <input type="hidden" name="view" value="@Model.ActiveView" />
-        <input type="hidden" name="withPhotos" id="withPhotosHidden" value="@(Model.OnlyWithPhotos ? "true" : "false")" />
-
-        <!-- Live Instant Search Input -->
-        <div class="jira-search-wrapper">
-            <i class="bi bi-search jira-search-icon"></i>
-            <input type="text" 
-                   id="clientSearchInput" 
-                   name="search" 
-                   value="@Model.CurrentSearch" 
-                   class="form-control form-control-sm jira-search-input py-1" 
-                   placeholder="Search cards, keys, tags... (Press / to focus)" 
-                   autocomplete="off" />
-            <button type="button" id="searchClearBtn" class="jira-search-clear">
-                <i class="bi bi-x-circle-fill"></i>
-            </button>
-        </div>
-
-        <!-- Multi-Select: Status -->
-        <div class="dropdown jira-filter-dropdown" data-filter-type="status">
-            <button class="btn btn-sm jira-filter-btn py-1 @(Model.CurrentStatusFilters.Any() ? "active" : "")" 
-                    type="button" 
-                    id="statusFilterDropdown" 
-                    data-bs-toggle="dropdown" 
-                    data-bs-auto-close="outside" 
-                    aria-expanded="false">
-                <span class="filter-label">Status</span>
-                <span class="jira-filter-counter" style="@(Model.CurrentStatusFilters.Any() ? "" : "display:none;")">@Model.CurrentStatusFilters.Count</span>
-                <i class="bi bi-chevron-down filter-caret"></i>
-            </button>
-            <div class="dropdown-menu jira-filter-menu p-0" aria-labelledby="statusFilterDropdown">
-                <div class="jira-filter-menu-header">
-                    <div class="input-group input-group-sm">
-                        <span class="input-group-text bg-transparent border-0 pe-1"><i class="bi bi-search text-muted"></i></span>
-                        <input type="text" class="form-control border-0 jira-filter-search" placeholder="Search status..." />
-                    </div>
-                    <div class="jira-filter-quick-actions">
-                        <button type="button" class="btn btn-link btn-xs select-all-btn">Select All</button>
-                        <span>·</span>
-                        <button type="button" class="btn btn-link btn-xs clear-all-btn">Clear</button>
-                    </div>
-                </div>
-                <div class="jira-filter-options-list">
-                    @foreach (var s in Model.Statuses)
-                    {
-                        var isChecked = Model.CurrentStatusFilters.Contains(s, StringComparer.OrdinalIgnoreCase);
-                        var count = Model.StatusCounts.GetValueOrDefault(s, 0);
-                        <label class="jira-filter-option">
-                            <input type="checkbox" name="status" value="@s" class="form-check-input filter-checkbox" @(isChecked ? "checked" : "") />
-                            <span class="option-name">@s</span>
-                            <span class="option-count">@count</span>
-                        </label>
-                    }
-                </div>
-                <div class="jira-filter-menu-footer d-flex justify-content-between align-items-center">
-                    <span class="small text-muted dropdown-selected-counter">0 selected</span>
-                    <button type="button" class="btn btn-xs btn-jira-primary apply-dropdown-filter-btn">
-                        <i class="bi bi-check2"></i> Apply
-                    </button>
-                </div>
             </div>
         </div>
 
-        <!-- Multi-Select: Assignee / Developer -->
-        <div class="dropdown jira-filter-dropdown" data-filter-type="assignee">
-            <button class="btn btn-sm jira-filter-btn py-1 @(Model.CurrentAssigneeFilters.Any() ? "active" : "")" 
-                    type="button" 
-                    id="assigneeFilterDropdown" 
-                    data-bs-toggle="dropdown" 
-                    data-bs-auto-close="outside" 
-                    aria-expanded="false">
-                <span class="filter-label">Assignee</span>
-                <span class="jira-filter-counter" style="@(Model.CurrentAssigneeFilters.Any() ? "" : "display:none;")">@Model.CurrentAssigneeFilters.Count</span>
-                <i class="bi bi-chevron-down filter-caret"></i>
-            </button>
-            <div class="dropdown-menu jira-filter-menu p-0" aria-labelledby="assigneeFilterDropdown">
-                <div class="jira-filter-menu-header">
-                    <div class="input-group input-group-sm">
-                        <span class="input-group-text bg-transparent border-0 pe-1"><i class="bi bi-search text-muted"></i></span>
-                        <input type="text" class="form-control border-0 jira-filter-search" placeholder="Search assignee..." />
+        <!-- Filter Row: Simple, Clean & Responsive -->
+        <form id="filterForm" method="get" asp-action="Index" class="jira-filter-bar">
+            <input type="hidden" name="view" value="@Model.ActiveView" />
+            <input type="hidden" name="withPhotos" id="withPhotosHidden" value="@(Model.OnlyWithPhotos ? "true" : "false")" />
+
+            <!-- Live Search Bar -->
+            <div class="jira-search-wrapper">
+                <i class="bi bi-search jira-search-icon"></i>
+                <input type="text" 
+                       id="clientSearchInput" 
+                       name="search" 
+                       value="@Model.CurrentSearch" 
+                       class="form-control form-control-sm jira-search-input py-1" 
+                       placeholder="Search cards, keys, summary... (Press / to focus)" 
+                       autocomplete="off" />
+                <button type="button" id="searchClearBtn" class="jira-search-clear">
+                    <i class="bi bi-x-circle-fill"></i>
+                </button>
+            </div>
+
+            <!-- Status Dropdown (Clean, Simple List) -->
+            <div class="dropdown jira-filter-dropdown" data-filter-type="status">
+                <button class="btn btn-sm jira-filter-btn py-1 @(Model.CurrentStatusFilters.Any() ? "active" : "")" 
+                        type="button" 
+                        id="statusFilterDropdown" 
+                        data-bs-toggle="dropdown" 
+                        data-bs-auto-close="outside">
+                    <span class="filter-label">Status</span>
+                    <span class="jira-filter-counter" style="@(Model.CurrentStatusFilters.Any() ? "" : "display:none;")">@Model.CurrentStatusFilters.Count</span>
+                    <i class="bi bi-chevron-down filter-caret"></i>
+                </button>
+                <div class="dropdown-menu jira-filter-menu p-2" aria-labelledby="statusFilterDropdown">
+                    <div class="jira-filter-options-list">
+                        @foreach (var s in Model.Statuses)
+                        {
+                            var isChecked = Model.CurrentStatusFilters.Contains(s, StringComparer.OrdinalIgnoreCase);
+                            var count = Model.StatusCounts.GetValueOrDefault(s, 0);
+                            <label class="jira-filter-option">
+                                <input type="checkbox" name="status" value="@s" class="form-check-input filter-checkbox" @(isChecked ? "checked" : "") />
+                                <span class="option-name">@s</span>
+                                <span class="option-count">@count</span>
+                            </label>
+                        }
                     </div>
-                    <div class="jira-filter-quick-actions">
-                        <button type="button" class="btn btn-link btn-xs select-all-btn">Select All</button>
-                        <span>·</span>
-                        <button type="button" class="btn btn-link btn-xs clear-all-btn">Clear</button>
-                    </div>
-                </div>
-                <div class="jira-filter-options-list">
-                    @foreach (var a in Model.Assignees)
-                    {
-                        var isChecked = Model.CurrentAssigneeFilters.Contains(a, StringComparer.OrdinalIgnoreCase);
-                        var count = Model.AssigneeCounts.GetValueOrDefault(a, 0);
-                        <label class="jira-filter-option">
-                            <input type="checkbox" name="assignee" value="@a" class="form-check-input filter-checkbox" @(isChecked ? "checked" : "") />
-                            <span class="option-name">@a</span>
-                            <span class="option-count">@count</span>
-                        </label>
-                    }
-                </div>
-                <div class="jira-filter-menu-footer d-flex justify-content-between align-items-center">
-                    <span class="small text-muted dropdown-selected-counter">0 selected</span>
-                    <button type="button" class="btn btn-xs btn-jira-primary apply-dropdown-filter-btn">
-                        <i class="bi bi-check2"></i> Apply
-                    </button>
                 </div>
             </div>
-        </div>
 
-        <!-- Multi-Select: Priority -->
-        <div class="dropdown jira-filter-dropdown" data-filter-type="priority">
-            <button class="btn btn-sm jira-filter-btn py-1 @(Model.CurrentPriorityFilters.Any() ? "active" : "")" 
-                    type="button" 
-                    id="priorityFilterDropdown" 
-                    data-bs-toggle="dropdown" 
-                    data-bs-auto-close="outside" 
-                    aria-expanded="false">
-                <span class="filter-label">Priority</span>
-                <span class="jira-filter-counter" style="@(Model.CurrentPriorityFilters.Any() ? "" : "display:none;")">@Model.CurrentPriorityFilters.Count</span>
-                <i class="bi bi-chevron-down filter-caret"></i>
-            </button>
-            <div class="dropdown-menu jira-filter-menu p-0" aria-labelledby="priorityFilterDropdown">
-                <div class="jira-filter-menu-header">
-                    <div class="input-group input-group-sm">
-                        <span class="input-group-text bg-transparent border-0 pe-1"><i class="bi bi-search text-muted"></i></span>
-                        <input type="text" class="form-control border-0 jira-filter-search" placeholder="Search priority..." />
+            <!-- Assignee Dropdown (Clean, Simple List) -->
+            <div class="dropdown jira-filter-dropdown" data-filter-type="assignee">
+                <button class="btn btn-sm jira-filter-btn py-1 @(Model.CurrentAssigneeFilters.Any() ? "active" : "")" 
+                        type="button" 
+                        id="assigneeFilterDropdown" 
+                        data-bs-toggle="dropdown" 
+                        data-bs-auto-close="outside">
+                    <span class="filter-label">Assignee</span>
+                    <span class="jira-filter-counter" style="@(Model.CurrentAssigneeFilters.Any() ? "" : "display:none;")">@Model.CurrentAssigneeFilters.Count</span>
+                    <i class="bi bi-chevron-down filter-caret"></i>
+                </button>
+                <div class="dropdown-menu jira-filter-menu p-2" aria-labelledby="assigneeFilterDropdown">
+                    <div class="jira-filter-options-list">
+                        @foreach (var a in Model.Assignees)
+                        {
+                            var isChecked = Model.CurrentAssigneeFilters.Contains(a, StringComparer.OrdinalIgnoreCase);
+                            var count = Model.AssigneeCounts.GetValueOrDefault(a, 0);
+                            <label class="jira-filter-option">
+                                <input type="checkbox" name="assignee" value="@a" class="form-check-input filter-checkbox" @(isChecked ? "checked" : "") />
+                                <span class="option-name">@a</span>
+                                <span class="option-count">@count</span>
+                            </label>
+                        }
                     </div>
-                    <div class="jira-filter-quick-actions">
-                        <button type="button" class="btn btn-link btn-xs select-all-btn">Select All</button>
-                        <span>·</span>
-                        <button type="button" class="btn btn-link btn-xs clear-all-btn">Clear</button>
-                    </div>
-                </div>
-                <div class="jira-filter-options-list">
-                    @foreach (var p in Model.Priorities)
-                    {
-                        var isChecked = Model.CurrentPriorityFilters.Contains(p, StringComparer.OrdinalIgnoreCase);
-                        var count = Model.PriorityCounts.GetValueOrDefault(p, 0);
-                        <label class="jira-filter-option">
-                            <input type="checkbox" name="priority" value="@p" class="form-check-input filter-checkbox" @(isChecked ? "checked" : "") />
-                            <span class="option-name d-flex align-items-center gap-1">
-                                <span class="jira-priority-icon prio-@p.ToLowerInvariant()">@GetPriorityArrow(p)</span>
-                                <span>@p</span>
-                            </span>
-                            <span class="option-count">@count</span>
-                        </label>
-                    }
-                </div>
-                <div class="jira-filter-menu-footer d-flex justify-content-between align-items-center">
-                    <span class="small text-muted dropdown-selected-counter">0 selected</span>
-                    <button type="button" class="btn btn-xs btn-jira-primary apply-dropdown-filter-btn">
-                        <i class="bi bi-check2"></i> Apply
-                    </button>
                 </div>
             </div>
-        </div>
 
-        <!-- Photos Only Toggle -->
-        <button type="button" 
-                id="photosOnlyToggleBtn"
-                class="btn btn-sm btn-jira-subtle py-1 @(Model.OnlyWithPhotos ? "active" : "")" 
-                title="Filter bugs with attached screenshot photos">
-            <i class="bi bi-camera-fill text-primary"></i> Photos Only
-            <span class="badge bg-light text-dark ms-1">@Model.TotalPhotosCount</span>
-        </button>
+            <!-- Priority Dropdown (Clean, Simple List) -->
+            <div class="dropdown jira-filter-dropdown" data-filter-type="priority">
+                <button class="btn btn-sm jira-filter-btn py-1 @(Model.CurrentPriorityFilters.Any() ? "active" : "")" 
+                        type="button" 
+                        id="priorityFilterDropdown" 
+                        data-bs-toggle="dropdown" 
+                        data-bs-auto-close="outside">
+                    <span class="filter-label">Priority</span>
+                    <span class="jira-filter-counter" style="@(Model.CurrentPriorityFilters.Any() ? "" : "display:none;")">@Model.CurrentPriorityFilters.Count</span>
+                    <i class="bi bi-chevron-down filter-caret"></i>
+                </button>
+                <div class="dropdown-menu jira-filter-menu p-2" aria-labelledby="priorityFilterDropdown">
+                    <div class="jira-filter-options-list">
+                        @foreach (var p in Model.Priorities)
+                        {
+                            var isChecked = Model.CurrentPriorityFilters.Contains(p, StringComparer.OrdinalIgnoreCase);
+                            var count = Model.PriorityCounts.GetValueOrDefault(p, 0);
+                            <label class="jira-filter-option">
+                                <input type="checkbox" name="priority" value="@p" class="form-check-input filter-checkbox" @(isChecked ? "checked" : "") />
+                                <span class="option-name d-flex align-items-center gap-1">
+                                    <span class="jira-priority-icon prio-@p.ToLowerInvariant()">@GetPriorityArrow(p)</span>
+                                    <span>@p</span>
+                                </span>
+                                <span class="option-count">@count</span>
+                            </label>
+                        }
+                    </div>
+                </div>
+            </div>
 
-        <!-- Primary Search Button: Apply Filters & Search -->
-        <button type="button" 
-                id="applyFiltersSearchBtn" 
-                class="btn btn-sm btn-jira-primary py-1 px-3 fw-bold shadow-sm" 
-                title="Search and apply all selected filters">
-            <i class="bi bi-search me-1"></i> Search
-        </button>
+            <!-- Photos Only Toggle -->
+            <button type="button" 
+                    id="photosOnlyToggleBtn"
+                    class="btn btn-sm btn-jira-subtle py-1 @(Model.OnlyWithPhotos ? "active" : "")" 
+                    title="Filter bugs with attached screenshot photos">
+                <i class="bi bi-camera-fill text-primary"></i> Photos Only
+                <span class="badge bg-light text-dark ms-1">@Model.TotalPhotosCount</span>
+            </button>
 
-        <!-- Sort By -->
-        <select name="sortBy" id="sortBySelect" class="form-select form-select-sm jira-select-filter py-1 ms-auto" onchange="this.form.submit()">
-            <option value="priority-desc" selected="@(Model.CurrentSortBy == "priority-desc")">Sort: Priority (High → Low)</option>
-            <option value="priority-asc" selected="@(Model.CurrentSortBy == "priority-asc")">Sort: Priority (Low → High)</option>
-            <option value="key-asc" selected="@(Model.CurrentSortBy == "key-asc")">Sort: Key (Asc)</option>
-            <option value="key-desc" selected="@(Model.CurrentSortBy == "key-desc")">Sort: Key (Desc)</option>
-            <option value="title-asc" selected="@(Model.CurrentSortBy == "title-asc")">Sort: Title (A → Z)</option>
-            <option value="date-asc" selected="@(Model.CurrentSortBy == "date-asc")">Sort: Due Date (Soonest)</option>
-            <option value="created-desc" selected="@(Model.CurrentSortBy == "created-desc")">Sort: Recently Created</option>
-        </select>
-    </form>
+            <!-- Search Button: Apply Filters -->
+            <button type="button" 
+                    id="applyFiltersSearchBtn" 
+                    class="btn btn-sm btn-jira-primary py-1 px-3 fw-bold shadow-sm" 
+                    title="Apply all selected filters">
+                <i class="bi bi-search me-1"></i> Search
+            </button>
 
-    <!-- Active Filter Chips Row -->
-    <div class="jira-active-chips-bar py-1" id="activeChipsBar" style="@(Model.HasActiveFilters ? "" : "display:none;")">
-        <span class="jira-chips-label"><i class="bi bi-funnel-fill text-primary"></i> Filters:</span>
-        <div class="jira-chips-list" id="activeChipsList">
-            @if (!string.IsNullOrWhiteSpace(Model.CurrentSearch))
-            {
-                <span class="jira-chip" data-chip-type="search">
-                    Search: "<strong>@Model.CurrentSearch</strong>"
-                    <button type="button" class="jira-chip-remove" title="Remove search filter" onclick="removeSearchFilter()">&times;</button>
-                </span>
-            }
-            @foreach (var s in Model.CurrentStatusFilters)
-            {
-                <span class="jira-chip" data-chip-type="status" data-chip-val="@s">
-                    Status: <strong>@s</strong>
-                    <button type="button" class="jira-chip-remove" title="Remove @s filter" onclick="removeFilter('status', '@s')">&times;</button>
-                </span>
-            }
-            @foreach (var a in Model.CurrentAssigneeFilters)
-            {
-                <span class="jira-chip" data-chip-type="assignee" data-chip-val="@a">
-                    Assignee: <strong>@a</strong>
-                    <button type="button" class="jira-chip-remove" title="Remove @a filter" onclick="removeFilter('assignee', '@a')">&times;</button>
-                </span>
-            }
-            @foreach (var p in Model.CurrentPriorityFilters)
-            {
-                <span class="jira-chip" data-chip-type="priority" data-chip-val="@p">
-                    Priority: <strong>@p</strong>
-                    <button type="button" class="jira-chip-remove" title="Remove @p filter" onclick="removeFilter('priority', '@p')">&times;</button>
-                </span>
-            }
-            @if (Model.OnlyWithPhotos)
-            {
-                <span class="jira-chip" data-chip-type="photos">
-                    <i class="bi bi-camera-fill text-primary"></i> <strong>Photos Only</strong>
-                    <button type="button" class="jira-chip-remove" title="Show all cards" onclick="togglePhotosFilter(false)">&times;</button>
-                </span>
-            }
-        </div>
-        <button type="button" class="btn btn-sm btn-link text-danger p-0 ms-2 text-decoration-none clear-all-filters-btn small" onclick="clearAllFilters()">
-            <i class="bi bi-x-circle"></i> Clear all
-        </button>
-    </div>
+            <!-- Clear All Filters Button -->
+            <button type="button" 
+                    id="quickClearFiltersBtn"
+                    class="btn btn-sm btn-link text-danger p-0 ms-1 text-decoration-none small" 
+                    onclick="clearAllFilters()" 
+                    style="@(Model.HasActiveFilters ? "" : "display:none;")">
+                <i class="bi bi-x-circle"></i> Clear
+            </button>
 
-    <!-- Live Counter and Summary (Compact) -->
-    <div class="mt-1 text-muted small d-flex align-items-center gap-3">
-        <span>Showing <strong id="visibleCardsCounter">@Model.TotalIssuesCount</strong> of <strong>@Model.TotalUnfilteredCount</strong> cards</span>
-        <span>•</span>
-        <span><i class="bi bi-images text-secondary"></i> <strong>@Model.TotalPhotosCount</strong> with screenshots</span>
-        <span class="ms-auto text-muted small d-none d-md-inline"><kbd>/</kbd> to search · <kbd>1</kbd> Board · <kbd>2</kbd> Table · <kbd>3</kbd> Gallery</span>
-    </div>
-</div>
+            <!-- Sort By Dropdown -->
+            <select name="sortBy" id="sortBySelect" class="form-select form-select-sm jira-select-filter py-1 ms-auto" onchange="this.form.submit()">
+                <option value="priority-desc" selected="@(Model.CurrentSortBy == "priority-desc")">Sort: Priority (High → Low)</option>
+                <option value="priority-asc" selected="@(Model.CurrentSortBy == "priority-asc")">Sort: Priority (Low → High)</option>
+                <option value="key-asc" selected="@(Model.CurrentSortBy == "key-asc")">Sort: Key (Asc)</option>
+                <option value="key-desc" selected="@(Model.CurrentSortBy == "key-desc")">Sort: Key (Desc)</option>
+                <option value="title-asc" selected="@(Model.CurrentSortBy == "title-asc")">Sort: Title (A → Z)</option>
+                <option value="date-asc" selected="@(Model.CurrentSortBy == "date-asc")">Sort: Due Date (Soonest)</option>
+                <option value="created-desc" selected="@(Model.CurrentSortBy == "created-desc")">Sort: Recently Created</option>
+            </select>
+        </form>
 
-<!-- Main Views Content Area -->
-<div class="jira-board-viewport">
-    <!-- Client No Results Notice (when active client filters match 0 cards) -->
-    <div id="clientNoResultsNotice" class="jira-empty-state my-4" style="display: none;">
-        <i class="bi bi-funnel fs-2 text-muted"></i>
-        <h6 class="fw-bold mt-2">No matching cards found</h6>
-        <p class="text-muted small">No cards match your current combination of filters.</p>
-        <button type="button" class="btn btn-jira-primary btn-sm" onclick="clearAllFilters()">
-            <i class="bi bi-x-circle me-1"></i> Clear All Filters
-        </button>
-    </div>
-
-    @if (!Model.Issues.Any())
-    {
-        @if (!Model.HasConfiguredUrl)
-        {
-            <!-- Auto-opens modal on first load if no sheet is connected -->
-            <div id="autoOpenConnectModal" class="d-none"></div>
-
-            <div class="card border-0 shadow-sm mx-auto my-4 p-4 text-center" style="max-width: 680px; border-radius: 12px; background: #ffffff;">
-                <div class="mb-3">
-                    <span class="d-inline-flex p-3 rounded-circle bg-primary-subtle text-primary">
-                        <i class="bi bi-cloud-arrow-down fs-1"></i>
+        <!-- Active Filter Chips Row -->
+        <div class="jira-active-chips-bar py-1" id="activeChipsBar" style="@(Model.HasActiveFilters ? "" : "display:none;")">
+            <span class="jira-chips-label"><i class="bi bi-funnel-fill text-primary"></i> Filters:</span>
+            <div class="jira-chips-list" id="activeChipsList">
+                @if (!string.IsNullOrWhiteSpace(Model.CurrentSearch))
+                {
+                    <span class="jira-chip" data-chip-type="search">
+                        Search: "<strong>@Model.CurrentSearch</strong>"
+                        <button type="button" class="jira-chip-remove" title="Remove search filter" onclick="removeSearchFilter()">&times;</button>
                     </span>
-                </div>
-                <h4 class="fw-bold text-dark mb-2">Connect Your Spreadsheet Link</h4>
-                <p class="text-muted small mb-4">
-                    Paste any public <strong>Google Sheet</strong>, <strong>Excel Online</strong>, <strong>SharePoint</strong>, or <strong>CSV</strong> link to generate your interactive Jira board in real-time.
-                </p>
-
-                <form asp-action="Import" method="post" class="w-100">
-                    @Html.AntiForgeryToken()
-                    <div class="input-group mb-3">
-                        <span class="input-group-text bg-light"><i class="bi bi-link-45deg text-primary"></i></span>
-                        <input type="url" name="GoogleSheetUrl" class="form-control" placeholder="https://docs.google.com/spreadsheets/d/... or Excel Online link" required />
-                        <button type="submit" class="btn btn-jira-primary px-3 fw-bold">
-                            <i class="bi bi-cloud-download me-1"></i> Load Board
-                        </button>
-                    </div>
-                </form>
-
-                <div class="d-flex justify-content-center align-items-center gap-3 flex-wrap text-muted small mt-2 pt-3 border-top">
-                    <span><i class="bi bi-check-circle-fill text-success me-1"></i> Google Sheets</span>
-                    <span><i class="bi bi-check-circle-fill text-success me-1"></i> Excel Online / SharePoint</span>
-                    <span><i class="bi bi-check-circle-fill text-success me-1"></i> CSV / XLSX Files</span>
-                    <span>·</span>
-                    <button type="button" class="btn btn-link btn-sm p-0 text-decoration-none" data-bs-toggle="modal" data-bs-target="#importSheetModal">
-                        More Import Options
-                    </button>
-                </div>
+                }
+                @foreach (var s in Model.CurrentStatusFilters)
+                {
+                    <span class="jira-chip" data-chip-type="status" data-chip-val="@s">
+                        Status: <strong>@s</strong>
+                        <button type="button" class="jira-chip-remove" title="Remove @s filter" onclick="removeFilter('status', '@s')">&times;</button>
+                    </span>
+                }
+                @foreach (var a in Model.CurrentAssigneeFilters)
+                {
+                    <span class="jira-chip" data-chip-type="assignee" data-chip-val="@a">
+                        Assignee: <strong>@a</strong>
+                        <button type="button" class="jira-chip-remove" title="Remove @a filter" onclick="removeFilter('assignee', '@a')">&times;</button>
+                    </span>
+                }
+                @foreach (var p in Model.CurrentPriorityFilters)
+                {
+                    <span class="jira-chip" data-chip-type="priority" data-chip-val="@p">
+                        Priority: <strong>@p</strong>
+                        <button type="button" class="jira-chip-remove" title="Remove @p filter" onclick="removeFilter('priority', '@p')">&times;</button>
+                    </span>
+                }
+                @if (Model.OnlyWithPhotos)
+                {
+                    <span class="jira-chip" data-chip-type="photos">
+                        <i class="bi bi-camera-fill text-primary"></i> <strong>Photos Only</strong>
+                        <button type="button" class="jira-chip-remove" title="Show all cards" onclick="togglePhotosFilter(false)">&times;</button>
+                    </span>
+                }
             </div>
-        }
-        else
+            <button type="button" class="btn btn-sm btn-link text-danger p-0 ms-2 text-decoration-none clear-all-filters-btn small" onclick="clearAllFilters()">
+                <i class="bi bi-x-circle"></i> Clear all
+            </button>
+        </div>
+    </div>
+
+    <!-- Main Views Content Area -->
+    <div class="jira-board-viewport">
+        <!-- Client No Results Notice (when active client filters match 0 cards) -->
+        <div id="clientNoResultsNotice" class="jira-empty-state my-4" style="display: none;">
+            <i class="bi bi-funnel fs-2 text-muted"></i>
+            <h6 class="fw-bold mt-2">No matching cards found</h6>
+            <p class="text-muted small">No cards match your current combination of filters.</p>
+            <button type="button" class="btn btn-jira-primary btn-sm" onclick="clearAllFilters()">
+                <i class="bi bi-x-circle me-1"></i> Clear All Filters
+            </button>
+        </div>
+
+        @if (Model.ActiveView == "table")
         {
-            <div class="jira-empty-state">
-                <i class="bi bi-inbox fs-2 text-muted"></i>
-                <h6 class="fw-bold mt-2">No matching cards found</h6>
-                <p class="text-muted small">Try adjusting your search criteria or clear active filters.</p>
-                <a asp-action="Index" asp-route-view="@Model.ActiveView" class="btn btn-jira-primary btn-sm">
-                    Reset All Filters
-                </a>
-            </div>
-        }
-    }
-    else if (Model.ActiveView == "table")
-    {
-        <!-- VIEW 2: Compact Table / Spreadsheet View -->
-        <div class="jira-table-container">
-            <table class="jira-table">
-                <thead>
-                    <tr>
-                        <th style="width: 50px;">Photo</th>
-                        <th class="sortable" data-asc="false" style="width: 100px;">Key <span class="sort-arrow">⇅</span></th>
-                        <th class="sortable" data-asc="false" style="width: 80px;">Type <span class="sort-arrow">⇅</span></th>
-                        <th class="sortable" data-asc="false">Summary / Title <span class="sort-arrow">⇅</span></th>
-                        <th class="sortable" data-asc="false" style="width: 150px;">Status <span class="sort-arrow">⇅</span></th>
-                        <th class="sortable" data-asc="false" style="width: 110px;">Priority <span class="sort-arrow">⇅</span></th>
-                        <th class="sortable" data-asc="false" style="width: 140px;">Assignee <span class="sort-arrow">⇅</span></th>
-                        <th style="width: 180px;">Tags</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    @foreach (var issue in Model.Issues)
-                    {
-                        var searchText = $"{issue.Key} {issue.Title} {issue.Description} {issue.Assignee} {issue.Status} {issue.Priority} {string.Join(" ", issue.Tags)}";
-                        <tr data-issue-id="@issue.Id" 
-                            data-status="@issue.Status" 
-                            data-assignee="@(string.IsNullOrWhiteSpace(issue.Assignee) ? "Unassigned" : issue.Assignee)" 
-                            data-priority="@issue.Priority" 
-                            data-type="@issue.IssueType" 
-                            data-has-photo="@(issue.HasPhoto ? "true" : "false")" 
-                            data-searchable-text="@searchText">
-                            <td class="text-center">
-                                @if (issue.HasPhoto)
-                                {
-                                    <img src="@issue.PrimaryPhoto" alt="Thumb" class="jira-table-thumb" onerror="this.src='/images/placeholder.svg'" />
-                                }
-                                else
-                                {
-                                    <span class="text-muted small"><i class="bi bi-dash"></i></span>
-                                }
-                            </td>
-                            <td>
-                                <span class="jira-issue-key">@issue.Key</span>
-                            </td>
-                            <td>
-                                <span class="jira-type-icon @GetTypeClass(issue.IssueType)" title="@issue.IssueType">
-                                    @issue.IssueType.Substring(0, 1)
-                                </span>
-                            </td>
-                            <td>
-                                <span class="fw-semibold text-dark text-truncate d-block" title="@issue.Title">@issue.Title</span>
-                            </td>
-                            <td>
-                                <span class="badge-status @GetStatusClass(issue.Status)">@issue.Status</span>
-                            </td>
-                            <td>
-                                <span class="jira-priority-icon prio-@issue.Priority.ToLowerInvariant()">
-                                    @GetPriorityArrow(issue.Priority)
-                                </span>
-                                <span class="small">@issue.Priority</span>
-                            </td>
-                            <td>
-                                <div class="d-flex align-items-center gap-1">
-                                    <span class="jira-avatar-circle @(issue.Assignee == "Unassigned" ? "jira-avatar-unassigned" : "")">
-                                        @GetInitials(issue.Assignee)
-                                    </span>
-                                    <span class="small text-truncate" style="max-width: 100px;">@issue.Assignee</span>
-                                </div>
-                            </td>
-                            <td>
-                                <div class="d-flex flex-wrap gap-1">
-                                    @foreach (var tag in issue.Tags.Take(2))
-                                    {
-                                        <span class="jira-tag-pill">@tag</span>
-                                    }
-                                </div>
-                            </td>
+            <!-- VIEW 2: Compact Table / Spreadsheet View -->
+            <div class="jira-table-container">
+                <table class="jira-table">
+                    <thead>
+                        <tr>
+                            <th style="width: 50px;">Photo</th>
+                            <th class="sortable" data-asc="false" style="width: 100px;">Key <span class="sort-arrow">⇅</span></th>
+                            <th class="sortable" data-asc="false" style="width: 80px;">Type <span class="sort-arrow">⇅</span></th>
+                            <th class="sortable" data-asc="false">Summary / Title <span class="sort-arrow">⇅</span></th>
+                            <th class="sortable" data-asc="false" style="width: 150px;">Status <span class="sort-arrow">⇅</span></th>
+                            <th class="sortable" data-asc="false" style="width: 110px;">Priority <span class="sort-arrow">⇅</span></th>
+                            <th class="sortable" data-asc="false" style="width: 140px;">Assignee <span class="sort-arrow">⇅</span></th>
+                            <th style="width: 180px;">Tags</th>
                         </tr>
-                    }
-                </tbody>
-            </table>
-        </div>
-    }
-    else if (Model.ActiveView == "gallery")
-    {
-        <!-- VIEW 3: Compact Photo Gallery Grid View -->
-        <div class="jira-gallery-grid">
-            @foreach (var issue in Model.Issues)
-            {
-                var searchText = $"{issue.Key} {issue.Title} {issue.Description} {issue.Assignee} {issue.Status} {issue.Priority} {string.Join(" ", issue.Tags)}";
-                <div class="jira-gallery-card" 
-                     data-issue-id="@issue.Id" 
-                     data-status="@issue.Status" 
-                     data-assignee="@(string.IsNullOrWhiteSpace(issue.Assignee) ? "Unassigned" : issue.Assignee)" 
-                     data-priority="@issue.Priority" 
-                     data-type="@issue.IssueType" 
-                     data-has-photo="@(issue.HasPhoto ? "true" : "false")" 
-                     data-searchable-text="@searchText">
-                    <div class="jira-gallery-img-wrapper">
-                        @if (issue.HasPhoto)
-                        {
-                            <img src="@issue.PrimaryPhoto" alt="@issue.Title" class="jira-gallery-img" onerror="this.src='/images/placeholder.svg'" />
-                            @if (issue.PhotoCount > 1)
-                            {
-                                <div class="jira-photo-badge">
-                                    <i class="bi bi-camera"></i> +@(issue.PhotoCount - 1)
-                                </div>
-                            }
-                        }
-                        else
-                        {
-                            <div class="d-flex align-items-center justify-content-center h-100 text-muted">
-                                <i class="bi bi-image fs-3 opacity-25"></i>
-                            </div>
-                        }
-                    </div>
-                    <div class="jira-gallery-body p-2">
-                        <div class="d-flex align-items-center justify-content-between mb-1">
-                            <span class="jira-issue-key">@issue.Key</span>
-                            <span class="badge-status @GetStatusClass(issue.Status)">@issue.Status</span>
-                        </div>
-                        <div class="small fw-bold text-dark text-truncate mb-1" title="@issue.Title">@issue.Title</div>
-                        <div class="d-flex align-items-center justify-content-between pt-1 border-top">
-                            <div class="d-flex align-items-center gap-1">
-                                <span class="jira-priority-icon prio-@issue.Priority.ToLowerInvariant()">
-                                    @GetPriorityArrow(issue.Priority)
-                                </span>
-                                <span class="small text-muted">@issue.Priority</span>
-                            </div>
-                            <div class="d-flex align-items-center gap-1">
-                                <span class="jira-avatar-circle @(issue.Assignee == "Unassigned" ? "jira-avatar-unassigned" : "")" title="@issue.Assignee">
-                                    @GetInitials(issue.Assignee)
-                                </span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            }
-        </div>
-    }
-    else
-    {
-        <!-- VIEW 1: Standard Compact Jira Kanban Board View -->
-        <div class="jira-board-columns">
-            @foreach (var status in Model.DisplayStatuses)
-            {
-                var issuesInStatus = Model.IssuesByStatus.TryGetValue(status, out var list) ? list : new List<JiraSheetBoard.Models.SheetIssue>();
-                <div class="jira-column" data-column-status="@status">
-                    <div class="jira-column-header">
-                        <span class="jira-column-title">@status</span>
-                        <span class="jira-column-count">@issuesInStatus.Count</span>
-                    </div>
-
-                    <div class="jira-column-cards">
-                        @foreach (var issue in issuesInStatus)
+                    </thead>
+                    <tbody>
+                        @foreach (var issue in Model.Issues)
                         {
                             var searchText = $"{issue.Key} {issue.Title} {issue.Description} {issue.Assignee} {issue.Status} {issue.Priority} {string.Join(" ", issue.Tags)}";
-                            <div class="jira-card" 
-                                 data-issue-id="@issue.Id" 
-                                 data-status="@issue.Status" 
-                                 data-assignee="@(string.IsNullOrWhiteSpace(issue.Assignee) ? "Unassigned" : issue.Assignee)" 
-                                 data-priority="@issue.Priority" 
-                                 data-type="@issue.IssueType" 
-                                 data-has-photo="@(issue.HasPhoto ? "true" : "false")" 
-                                 data-searchable-text="@searchText">
-                                
-                                @if (issue.HasPhoto)
-                                {
-                                    <div class="jira-card-photo-wrapper">
-                                        <img src="@issue.PrimaryPhoto" alt="@issue.Title" class="jira-card-photo" onerror="this.src='/images/placeholder.svg'" />
-                                        @if (issue.PhotoCount > 1)
-                                        {
-                                            <div class="jira-photo-badge">
-                                                <i class="bi bi-camera"></i> +@(issue.PhotoCount - 1)
-                                            </div>
-                                        }
+                            <tr data-issue-id="@issue.Id" 
+                                data-status="@issue.Status" 
+                                data-assignee="@(string.IsNullOrWhiteSpace(issue.Assignee) ? "Unassigned" : issue.Assignee)" 
+                                data-priority="@issue.Priority" 
+                                data-type="@issue.IssueType" 
+                                data-has-photo="@(issue.HasPhoto ? "true" : "false")" 
+                                data-searchable-text="@searchText">
+                                <td class="text-center">
+                                    @if (issue.HasPhoto)
+                                    {
+                                        <img src="@issue.PrimaryPhoto" alt="Thumb" class="jira-table-thumb" onerror="this.src='/images/placeholder.svg'" />
+                                    }
+                                    else
+                                    {
+                                        <i class="bi bi-file-earmark-text text-muted opacity-50"></i>
+                                    }
+                                </td>
+                                <td>
+                                    <span class="jira-issue-key">@issue.Key</span>
+                                </td>
+                                <td>
+                                    <span class="jira-type-icon @GetTypeClass(issue.IssueType)">
+                                        @issue.IssueType
+                                    </span>
+                                </td>
+                                <td>
+                                    <div class="jira-table-title" title="@issue.Title">
+                                        @issue.Title
                                     </div>
-                                }
-
-                                <div class="jira-card-title" title="@issue.Title">@issue.Title</div>
-
-                                @if (issue.Tags.Any())
-                                {
-                                    <div class="jira-card-tags">
+                                    @if (!string.IsNullOrWhiteSpace(issue.Description))
+                                    {
+                                        <div class="jira-table-desc text-truncate small text-muted" style="max-width: 450px;">
+                                            @issue.Description
+                                        </div>
+                                    }
+                                </td>
+                                <td>
+                                    <span class="badge-status @GetStatusClass(issue.Status)">
+                                        @issue.Status
+                                    </span>
+                                </td>
+                                <td>
+                                    <div class="d-flex align-items-center gap-1">
+                                        <span class="jira-priority-icon prio-@issue.Priority.ToLowerInvariant()">
+                                            @GetPriorityArrow(issue.Priority)
+                                        </span>
+                                        <span class="small">@issue.Priority</span>
+                                    </div>
+                                </td>
+                                <td>
+                                    <div class="d-flex align-items-center gap-1">
+                                        <span class="jira-avatar-circle @(issue.Assignee == "Unassigned" ? "jira-avatar-unassigned" : "")">
+                                            @GetInitials(issue.Assignee)
+                                        </span>
+                                        <span class="small text-truncate" style="max-width: 100px;">@issue.Assignee</span>
+                                    </div>
+                                </td>
+                                <td>
+                                    <div class="d-flex flex-wrap gap-1">
                                         @foreach (var tag in issue.Tags.Take(2))
                                         {
                                             <span class="jira-tag-pill">@tag</span>
                                         }
                                     </div>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+        else if (Model.ActiveView == "gallery")
+        {
+            <!-- VIEW 3: Compact Photo Gallery Grid View -->
+            <div class="jira-gallery-grid">
+                @foreach (var issue in Model.Issues)
+                {
+                    var searchText = $"{issue.Key} {issue.Title} {issue.Description} {issue.Assignee} {issue.Status} {issue.Priority} {string.Join(" ", issue.Tags)}";
+                    <div class="jira-gallery-card" 
+                         data-issue-id="@issue.Id" 
+                         data-status="@issue.Status" 
+                         data-assignee="@(string.IsNullOrWhiteSpace(issue.Assignee) ? "Unassigned" : issue.Assignee)" 
+                         data-priority="@issue.Priority" 
+                         data-type="@issue.IssueType" 
+                         data-has-photo="@(issue.HasPhoto ? "true" : "false")" 
+                         data-searchable-text="@searchText">
+                        <div class="jira-gallery-img-wrapper">
+                            @if (issue.HasPhoto)
+                            {
+                                <img src="@issue.PrimaryPhoto" alt="@issue.Title" class="jira-gallery-img" onerror="this.src='/images/placeholder.svg'" />
+                                @if (issue.PhotoCount > 1)
+                                {
+                                    <div class="jira-photo-badge">
+                                        <i class="bi bi-camera"></i> +@(issue.PhotoCount - 1)
+                                    </div>
                                 }
-
-                                <div class="jira-card-footer">
-                                    <div class="jira-card-left-meta">
-                                        <span class="jira-type-icon @GetTypeClass(issue.IssueType)" title="@issue.IssueType">
-                                            @issue.IssueType.Substring(0, 1)
-                                        </span>
-                                        <span class="jira-issue-key">@issue.Key</span>
-                                        <span class="jira-priority-icon prio-@issue.Priority.ToLowerInvariant()" title="Priority: @issue.Priority">
-                                            @GetPriorityArrow(issue.Priority)
-                                        </span>
-                                    </div>
-
-                                    <div class="d-flex align-items-center gap-1">
-                                        @if (issue.DueDate.HasValue)
-                                        {
-                                            var isOverdue = issue.DueDate.Value < DateTime.Today && issue.Status != "Done" && issue.Status != "Tested and Closed";
-                                            <span class="jira-due-pill @(isOverdue ? "overdue" : "")" title="Due Date">
-                                                <i class="bi bi-clock"></i> @issue.DueDate.Value.ToString("MMM dd")
-                                            </span>
-                                        }
-                                        <span class="jira-avatar-circle @(issue.Assignee == "Unassigned" ? "jira-avatar-unassigned" : "")" title="Assignee: @issue.Assignee">
-                                            @GetInitials(issue.Assignee)
-                                        </span>
-                                    </div>
+                            }
+                            else
+                            {
+                                <div class="d-flex align-items-center justify-content-center h-100 text-muted">
+                                    <i class="bi bi-image fs-3 opacity-25"></i>
+                                </div>
+                            }
+                        </div>
+                        <div class="jira-gallery-body p-2">
+                            <div class="d-flex align-items-center justify-content-between mb-1">
+                                <span class="jira-issue-key">@issue.Key</span>
+                                <span class="badge-status @GetStatusClass(issue.Status)">@issue.Status</span>
+                            </div>
+                            <div class="small fw-bold text-dark text-truncate mb-1" title="@issue.Title">@issue.Title</div>
+                            <div class="d-flex align-items-center justify-content-between pt-1 border-top">
+                                <div class="d-flex align-items-center gap-1">
+                                    <span class="jira-priority-icon prio-@issue.Priority.ToLowerInvariant()">
+                                        @GetPriorityArrow(issue.Priority)
+                                    </span>
+                                    <span class="small text-muted">@issue.Priority</span>
+                                </div>
+                                <div class="d-flex align-items-center gap-1">
+                                    <span class="jira-avatar-circle @(issue.Assignee == "Unassigned" ? "jira-avatar-unassigned" : "")" title="@issue.Assignee">
+                                        @GetInitials(issue.Assignee)
+                                    </span>
                                 </div>
                             </div>
-                        }
+                        </div>
                     </div>
-                </div>
-            }
-        </div>
-    }
-</div>
+                }
+            </div>
+        }
+        else
+        {
+            <!-- VIEW 1: Standard Compact Jira Kanban Board View -->
+            <div class="jira-board-columns">
+                @foreach (var status in Model.DisplayStatuses)
+                {
+                    var issuesInStatus = Model.IssuesByStatus.TryGetValue(status, out var list) ? list : new List<JiraSheetBoard.Models.SheetIssue>();
+                    <div class="jira-column" data-column-status="@status">
+                        <div class="jira-column-header">
+                            <span class="jira-column-title">@status</span>
+                            <span class="jira-column-count">@issuesInStatus.Count</span>
+                        </div>
+
+                        <div class="jira-column-cards">
+                            @foreach (var issue in issuesInStatus)
+                            {
+                                var searchText = $"{issue.Key} {issue.Title} {issue.Description} {issue.Assignee} {issue.Status} {issue.Priority} {string.Join(" ", issue.Tags)}";
+                                <div class="jira-card" 
+                                     data-issue-id="@issue.Id" 
+                                     data-status="@issue.Status" 
+                                     data-assignee="@(string.IsNullOrWhiteSpace(issue.Assignee) ? "Unassigned" : issue.Assignee)" 
+                                     data-priority="@issue.Priority" 
+                                     data-type="@issue.IssueType" 
+                                     data-has-photo="@(issue.HasPhoto ? "true" : "false")" 
+                                     data-searchable-text="@searchText">
+                                    
+                                    @if (issue.HasPhoto)
+                                    {
+                                        <div class="jira-card-photo-wrapper">
+                                            <img src="@issue.PrimaryPhoto" alt="@issue.Title" class="jira-card-photo" onerror="this.src='/images/placeholder.svg'" />
+                                            @if (issue.PhotoCount > 1)
+                                            {
+                                                <div class="jira-photo-badge">
+                                                    <i class="bi bi-camera"></i> +@(issue.PhotoCount - 1)
+                                                </div>
+                                            }
+                                        </div>
+                                    }
+
+                                    <div class="jira-card-title" title="@issue.Title">@issue.Title</div>
+
+                                    @if (issue.Tags.Any())
+                                    {
+                                        <div class="jira-card-tags">
+                                            @foreach (var tag in issue.Tags.Take(2))
+                                            {
+                                                <span class="jira-tag-pill">@tag</span>
+                                            }
+                                        </div>
+                                    }
+
+                                    <div class="jira-card-footer">
+                                        <div class="jira-card-left-meta">
+                                            <span class="jira-type-icon @GetTypeClass(issue.IssueType)" title="@issue.IssueType">
+                                                @issue.IssueType.Substring(0, 1)
+                                            </span>
+                                            <span class="jira-issue-key">@issue.Key</span>
+                                            <span class="jira-priority-icon prio-@issue.Priority.ToLowerInvariant()" title="Priority: @issue.Priority">
+                                                @GetPriorityArrow(issue.Priority)
+                                            </span>
+                                        </div>
+
+                                        <div class="d-flex align-items-center gap-1">
+                                            @if (issue.DueDate.HasValue)
+                                            {
+                                                var isOverdue = issue.DueDate.Value < DateTime.Today && issue.Status != "Done" && issue.Status != "Tested and Closed";
+                                                <span class="jira-due-pill @(isOverdue ? "overdue" : "")" title="Due Date">
+                                                    <i class="bi bi-clock"></i> @issue.DueDate.Value.ToString("MMM dd")
+                                                </span>
+                                            }
+                                            <span class="jira-avatar-circle @(issue.Assignee == "Unassigned" ? "jira-avatar-unassigned" : "")" title="Assignee: @issue.Assignee">
+                                                @GetInitials(issue.Assignee)
+                                            </span>
+                                        </div>
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    </div>
+                }
+            </div>
+        }
+    </div>
+}
 
 @functions {
-    public static string GetTypeClass(string type) => (type?.ToLowerInvariant()) switch
-    {
-        "bug" => "jira-type-bug",
-        "story" => "jira-type-story",
-        "epic" => "jira-type-epic",
-        _ => "jira-type-task"
-    };
-
-    public static string GetStatusClass(string? status) => (status?.ToLowerInvariant()) switch
-    {
-        var s when s != null && s.Contains("progress") => "badge-status-inprogress",
-        var s when s != null && (s.Contains("review") || s.Contains("test")) => "badge-status-inreview",
-        var s when s != null && (s.Contains("done") || s.Contains("closed")) => "badge-status-done",
-        _ => "badge-status-todo"
-    };
-
-    public static string GetPriorityArrow(string priority) => (priority?.ToLowerInvariant()) switch
-    {
-        "critical" => "▲▲",
-        "highest" => "▲▲",
-        "major" => "▲",
-        "high" => "▲",
-        "medium" => "■",
-        "minor" => "▼",
-        "low" => "▼",
-        "lowest" => "▼▼",
-        _ => "■"
-    };
-
-    public static string GetInitials(string name)
+    public static string GetInitials(string? name)
     {
         if (string.IsNullOrWhiteSpace(name) || name == "Unassigned") return "?";
         var parts = name.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        if (parts.Length >= 2)
-        {
-            return $"{parts[0][0]}{parts[^1][0]}".ToUpperInvariant();
-        }
-        return name.Substring(0, Math.Min(2, name.Length)).ToUpperInvariant();
+        if (parts.Length == 1) return parts[0].Substring(0, Math.Min(2, parts[0].Length)).ToUpperInvariant();
+        return $"{parts[0][0]}{parts[1][0]}".ToUpperInvariant();
+    }
+
+    public static string GetStatusClass(string? status)
+    {
+        var s = (status ?? "").ToLowerInvariant();
+        if (s.Contains("open") || s.Contains("todo") || s.Contains("to do") || s.Contains("backlog")) return "badge-status-todo";
+        if (s.Contains("progress") || s.Contains("doing") || s.Contains("review") || s.Contains("develop")) return "badge-status-progress";
+        if (s.Contains("ready") || s.Contains("qa") || s.Contains("test")) return "badge-status-qa";
+        if (s.Contains("closed") || s.Contains("done") || s.Contains("merged")) return "badge-status-done";
+        return "badge-status-todo";
+    }
+
+    public static string GetTypeClass(string? type)
+    {
+        var t = (type ?? "").ToLowerInvariant();
+        if (t.Contains("bug") || t.Contains("defect")) return "jira-type-bug";
+        if (t.Contains("story")) return "jira-type-story";
+        if (t.Contains("epic")) return "jira-type-epic";
+        return "jira-type-task";
+    }
+
+    public static string GetPriorityArrow(string? priority)
+    {
+        var p = (priority ?? "").ToLowerInvariant();
+        if (p.Contains("critical") || p.Contains("highest") || p.Contains("blocker")) return "⬆⬆";
+        if (p.Contains("major") || p.Contains("high")) return "⬆";
+        if (p.Contains("medium") || p.Contains("normal")) return "=";
+        if (p.Contains("minor") || p.Contains("low")) return "⬇";
+        if (p.Contains("lowest") || p.Contains("trivial")) return "⬇⬇";
+        return "=";
     }
 }

@@ -230,57 +230,33 @@ function initApplySearchButton() {
 }
 
 // --------------------------------------------------------------------------
-// 7. Generic "Connect Sheet / Paste Link" Modal Helper
+// 7. Generic "Connect Sheet / Paste Link" Helper (Home Page & Modal)
 // --------------------------------------------------------------------------
 function initImportSheetModal() {
-    const modalEl = document.getElementById("importSheetModal");
-    if (!modalEl) return;
-
-    // Auto-open modal on first load if no sheet is connected yet
-    if (document.getElementById("autoOpenConnectModal")) {
-        const importModal = bootstrap.Modal.getOrCreateInstance(modalEl);
-        setTimeout(function () {
-            importModal.show();
-        }, 350);
+    // 1. Home Page Paste button
+    const homePasteBtn = document.getElementById("homePasteBtn");
+    if (homePasteBtn) {
+        homePasteBtn.addEventListener("click", function () {
+            handlePasteToField("homeSheetUrlInput");
+        });
     }
 
-    // Auto-focus URL input on open
-    modalEl.addEventListener("shown.bs.modal", function () {
-        const input = document.getElementById("modalSheetUrlInput");
-        if (input) {
-            input.focus();
-            input.select();
-        }
-    });
+    // 2. Modal Paste button
+    const modalPasteBtn = document.getElementById("pasteClipboardBtn");
+    if (modalPasteBtn) {
+        modalPasteBtn.addEventListener("click", function () {
+            handlePasteToField("modalSheetUrlInput");
+        });
+    }
 
-    // 1-Click "Paste from Clipboard" button
-    const pasteBtn = document.getElementById("pasteClipboardBtn");
-    if (pasteBtn) {
-        pasteBtn.addEventListener("click", async function () {
-            try {
-                if (navigator.clipboard && navigator.clipboard.readText) {
-                    const text = await navigator.clipboard.readText();
-                    if (text && (text.trim().startsWith("http://") || text.trim().startsWith("https://"))) {
-                        const input = document.getElementById("modalSheetUrlInput");
-                        if (input) {
-                            input.value = text.trim();
-                            showJiraToast("Pasted sheet link from clipboard!", true);
-                            input.focus();
-                        }
-                    } else if (text && text.trim().length > 0) {
-                        const input = document.getElementById("modalSheetUrlInput");
-                        if (input) {
-                            input.value = text.trim();
-                            showJiraToast("Pasted text into link field.", true);
-                        }
-                    } else {
-                        showJiraToast("Clipboard does not contain a link. Please copy a link first.", false);
-                    }
-                } else {
-                    showJiraToast("Clipboard access unavailable. Please press Ctrl+V to paste.", false);
-                }
-            } catch (err) {
-                showJiraToast("Please press Ctrl+V to paste your link directly.", false);
+    // Modal shown auto-focus
+    const modalEl = document.getElementById("importSheetModal");
+    if (modalEl) {
+        modalEl.addEventListener("shown.bs.modal", function () {
+            const input = document.getElementById("modalSheetUrlInput");
+            if (input) {
+                input.focus();
+                input.select();
             }
         });
     }
@@ -296,8 +272,30 @@ function initImportSheetModal() {
     }
 }
 
+async function handlePasteToField(inputId) {
+    const input = document.getElementById(inputId);
+    if (!input) return;
+
+    try {
+        if (navigator.clipboard && navigator.clipboard.readText) {
+            const text = await navigator.clipboard.readText();
+            if (text && text.trim().length > 0) {
+                input.value = text.trim();
+                showJiraToast("Pasted sheet link from clipboard!", true);
+                input.focus();
+            } else {
+                showJiraToast("Clipboard does not contain a link. Please copy a link first.", false);
+            }
+        } else {
+            showJiraToast("Clipboard access unavailable. Please press Ctrl+V to paste.", false);
+        }
+    } catch (err) {
+        showJiraToast("Please press Ctrl+V to paste your link directly.", false);
+    }
+}
+
 // --------------------------------------------------------------------------
-// 8. Multi-Select Filter System (Status, Assignee, Priority, Types, Photos)
+// 8. Multi-Select Filter System (Status, Assignee, Priority, Photos)
 // --------------------------------------------------------------------------
 function initMultiFilters() {
     document.querySelectorAll(".jira-filter-dropdown .filter-checkbox").forEach(function (cb) {
@@ -310,40 +308,6 @@ function initMultiFilters() {
 
     document.querySelectorAll(".jira-filter-dropdown").forEach(function (dropdown) {
         updateDropdownCounter(dropdown);
-
-        const searchInput = dropdown.querySelector(".jira-filter-search");
-        const optionsList = dropdown.querySelector(".jira-filter-options-list");
-        if (searchInput && optionsList) {
-            searchInput.addEventListener("input", function () {
-                const term = this.value.trim().toLowerCase();
-                optionsList.querySelectorAll(".jira-filter-option").forEach(function (opt) {
-                    const name = opt.querySelector(".option-name")?.textContent.toLowerCase() || "";
-                    opt.style.display = name.includes(term) ? "" : "none";
-                });
-            });
-        }
-
-        const selectAllBtn = dropdown.querySelector(".select-all-btn");
-        if (selectAllBtn && optionsList) {
-            selectAllBtn.addEventListener("click", function () {
-                optionsList.querySelectorAll(".jira-filter-option:not([style*='display: none']) .filter-checkbox").forEach(function (cb) {
-                    cb.checked = true;
-                });
-                updateDropdownCounter(dropdown);
-                applyClientFilters(false);
-            });
-        }
-
-        const clearAllBtn = dropdown.querySelector(".clear-all-btn");
-        if (clearAllBtn && optionsList) {
-            clearAllBtn.addEventListener("click", function () {
-                optionsList.querySelectorAll(".filter-checkbox").forEach(function (cb) {
-                    cb.checked = false;
-                });
-                updateDropdownCounter(dropdown);
-                applyClientFilters(false);
-            });
-        }
     });
 
     const photosBtn = document.getElementById("photosOnlyToggleBtn");
@@ -535,6 +499,12 @@ function applyClientFilters(notify = false) {
     if (noResultsEl) {
         const hasCardsToBeginWith = (cards.length > 0 || tableRows.length > 0 || galleryCards.length > 0);
         noResultsEl.style.display = (totalVisible === 0 && hasCardsToBeginWith) ? "block" : "none";
+    }
+
+    const hasAnyActiveFilter = Boolean(searchQuery || selectedStatuses.length > 0 || selectedAssignees.length > 0 || selectedPriorities.length > 0 || selectedTypes.length > 0 || photosOnly);
+    const quickClearBtn = document.getElementById("quickClearFiltersBtn");
+    if (quickClearBtn) {
+        quickClearBtn.style.display = hasAnyActiveFilter ? "inline-block" : "none";
     }
 
     updateFilterButtonBadge("status", selectedStatuses);
