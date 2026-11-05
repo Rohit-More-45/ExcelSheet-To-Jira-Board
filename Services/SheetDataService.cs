@@ -1,6 +1,8 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.IO.Compression;
 using System.Net;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -252,12 +254,15 @@ public class SheetDataService : ISheetDataService
             {
                 CookieContainer = cookieContainer,
                 AllowAutoRedirect = true,
+                MaxAutomaticRedirections = 10,
                 AutomaticDecompression = DecompressionMethods.All
             };
 
             using var client = new HttpClient(handler);
-            client.Timeout = TimeSpan.FromMinutes(2);
-            client.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 JiraSheetViewer/1.0");
+            client.Timeout = TimeSpan.FromSeconds(25);
+            client.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36");
+            client.DefaultRequestHeaders.TryAddWithoutValidation("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv,*/*;q=0.8");
+            client.DefaultRequestHeaders.TryAddWithoutValidation("Accept-Language", "en-US,en;q=0.9");
 
             byte[]? downloadedBytes = null;
             string? usedUrl = null;
@@ -274,16 +279,13 @@ public class SheetDataService : ISheetDataService
                         var bytes = await response.Content.ReadAsByteArrayAsync();
                         if (bytes.Length > 0)
                         {
-                            // Check if returned HTML error page
-                            var headerSnippet = Encoding.UTF8.GetString(bytes.Take(Math.Min(bytes.Length, 300)).ToArray());
-                            if (!headerSnippet.Contains("<!DOCTYPE html", StringComparison.OrdinalIgnoreCase) &&
-                                !headerSnippet.Contains("<html", StringComparison.OrdinalIgnoreCase))
+                            if (IsValidSpreadsheetBytes(bytes, out var isHtml))
                             {
                                 downloadedBytes = bytes;
                                 usedUrl = exportUrl;
                                 break;
                             }
-                            else
+                            else if (isHtml)
                             {
                                 lastError = "HTML login page returned instead of raw data.";
                             }
@@ -300,9 +302,42 @@ public class SheetDataService : ISheetDataService
                 }
             }
 
+            // Fallback: Try curl.exe on Windows if HttpClient failed or returned HTML
+            if (downloadedBytes == null && RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            {
+                foreach (var exportUrl in candidateUrls)
+                {
+                    var curlBytes = TryDownloadWithCurl(exportUrl);
+                    if (curlBytes != null && curlBytes.Length > 0)
+                    {
+                        if (IsValidSpreadsheetBytes(curlBytes, out var isHtml))
+                        {
+                            downloadedBytes = curlBytes;
+                            usedUrl = exportUrl;
+                            break;
+                        }
+                        else if (isHtml)
+                        {
+                            lastError = "HTML login page returned instead of raw data.";
+                        }
+                    }
+                }
+            }
+
             if (downloadedBytes == null)
             {
-                return (false, $"Unable to fetch sheet data ({lastError ?? "Access restricted"}). Please ensure the file or Google Sheet has public view access.", 0);
+                var isAuthGate = lastError != null && (
+                    lastError.Contains("HTML login page", StringComparison.OrdinalIgnoreCase) ||
+                    lastError.Contains("401", StringComparison.OrdinalIgnoreCase) ||
+                    lastError.Contains("403", StringComparison.OrdinalIgnoreCase)
+                );
+
+                if (isAuthGate)
+                {
+                    return (false, "This sheet is locked behind corporate Single Sign-On (Microsoft / Google login). To open it right now: Download the file from your browser (File > Save As > Download a Copy) and upload the .xlsx file here, or change the link sharing to 'Anyone with the link can view'.", 0);
+                }
+
+                return (false, $"Unable to fetch sheet data ({lastError ?? "Access restricted"}). Please ensure the link is publicly accessible or upload your .xlsx file directly.", 0);
             }
 
             // Detect binary XLSX (PK..) or CSV text
@@ -342,6 +377,66 @@ public class SheetDataService : ISheetDataService
             _logger.LogError(ex, "Failed to import from URL {Url}", url);
             return (false, $"Error fetching URL: {ex.Message}", 0);
         }
+    }
+
+    private static bool IsValidSpreadsheetBytes(byte[] bytes, out bool isHtml)
+    {
+        isHtml = false;
+        if (bytes == null || bytes.Length == 0) return false;
+
+        // Binary XLSX/ZIP check (PK\x03\x04)
+        if (bytes.Length >= 4 && bytes[0] == 0x50 && bytes[1] == 0x4B && bytes[2] == 0x03 && bytes[3] == 0x04)
+        {
+            return true;
+        }
+
+        // Text check for HTML login or viewer pages
+        var snippet = Encoding.UTF8.GetString(bytes.Take(Math.Min(bytes.Length, 500)).ToArray());
+        if (snippet.Contains("<!DOCTYPE html", StringComparison.OrdinalIgnoreCase) ||
+            snippet.Contains("<html", StringComparison.OrdinalIgnoreCase) ||
+            snippet.Contains("<head", StringComparison.OrdinalIgnoreCase) ||
+            snippet.Contains("login.microsoftonline.com", StringComparison.OrdinalIgnoreCase) ||
+            snippet.Contains("accounts.google.com", StringComparison.OrdinalIgnoreCase) ||
+            snippet.Contains("Federated Redirect", StringComparison.OrdinalIgnoreCase))
+        {
+            isHtml = true;
+            return false;
+        }
+
+        return true;
+    }
+
+    private byte[]? TryDownloadWithCurl(string exportUrl)
+    {
+        try
+        {
+            var tempFile = Path.Combine(Path.GetTempPath(), $"jira_sheet_{Guid.NewGuid():N}.tmp");
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = "curl.exe",
+                Arguments = $"-L -s -k --max-time 15 -A \"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36\" -o \"{tempFile}\" \"{exportUrl}\"",
+                CreateNoWindow = true,
+                UseShellExecute = false,
+                RedirectStandardError = true
+            };
+
+            using var proc = Process.Start(startInfo);
+            if (proc != null)
+            {
+                proc.WaitForExit(16000);
+                if (File.Exists(tempFile))
+                {
+                    var bytes = File.ReadAllBytes(tempFile);
+                    try { File.Delete(tempFile); } catch { }
+                    if (bytes.Length > 0) return bytes;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Curl fallback failed for {Url}", exportUrl);
+        }
+        return null;
     }
 
     public Task ResetToSampleDataAsync()
@@ -895,14 +990,35 @@ public class SheetDataService : ISheetDataService
             url.Contains("1drv.ms", StringComparison.OrdinalIgnoreCase) ||
             url.Contains("onedrive.live.com", StringComparison.OrdinalIgnoreCase))
         {
-            if (url.Contains("?"))
+            // Normalize SharePoint web viewer /:x:/r/ or /:w:/r/ or /:p:/r/ to direct guest download /:x:/g/
+            var directUrl = Regex.Replace(url, @"/:[xwpb]:/r/", "/:x:/g/", RegexOptions.IgnoreCase);
+
+            // Strip tracking query parameters (rtime, CID, wdLOR, csf, web, etc.)
+            var cleanBase = Regex.Replace(directUrl, @"\?.*$", "");
+
+            // Primary candidate: Clean direct URL with ?download=1
+            urls.Add(cleanBase + "?download=1");
+
+            // Secondary candidate: Direct URL with &download=1
+            if (directUrl.Contains("?"))
             {
-                urls.Add(Regex.Replace(url, @"\?.*$", "?download=1"));
-                urls.Add(url + "&download=1");
+                urls.Add(directUrl + "&download=1");
             }
             else
             {
-                urls.Add(url + "?download=1");
+                urls.Add(directUrl + "?download=1");
+            }
+
+            // Tertiary candidate: onedrive.live.com
+            if (url.Contains("onedrive.live.com", StringComparison.OrdinalIgnoreCase))
+            {
+                urls.Add(url.Replace("/view.aspx", "/download").Replace("/edit.aspx", "/download"));
+            }
+
+            // Quaternary candidate: 1drv.ms short link
+            if (url.Contains("1drv.ms", StringComparison.OrdinalIgnoreCase))
+            {
+                urls.Add(url.Contains("?") ? url + "&download=1" : url + "?download=1");
             }
         }
 
@@ -911,28 +1027,37 @@ public class SheetDataService : ISheetDataService
         {
             var matchGid = Regex.Match(url, @"[#&?]gid=([0-9]+)");
             var gidParam = matchGid.Success ? $"&gid={matchGid.Groups[1].Value}" : "&gid=0";
+            var gidValue = matchGid.Success ? matchGid.Groups[1].Value : "0";
 
             // Check if published to web link: /d/e/2PACX.../
-            var matchPublished = Regex.Match(url, @"docs\.google\.com/spreadsheets/d/e/([a-zA-Z0-9-_]+)");
+            var matchPublished = Regex.Match(url, @"docs\.google\.com/spreadsheets/(?:u/[0-9]+/)?d/e/([a-zA-Z0-9-_]+)");
             if (matchPublished.Success)
             {
                 var pubToken = matchPublished.Groups[1].Value;
+                urls.Add($"https://docs.google.com/spreadsheets/d/e/{pubToken}/pub?output=xlsx{gidParam}");
                 urls.Add($"https://docs.google.com/spreadsheets/d/e/{pubToken}/pub?output=csv{gidParam}");
-                urls.Add($"https://docs.google.com/spreadsheets/d/e/{pubToken}/pub?gid=0&single=true&output=csv");
+                urls.Add($"https://docs.google.com/spreadsheets/d/e/{pubToken}/pub?gid={gidValue}&single=true&output=csv");
             }
 
-            // Standard Google Sheet link: /d/{sheetId}/
-            var matchId = Regex.Match(url, @"docs\.google\.com/spreadsheets/d/([a-zA-Z0-9-_]+)");
+            // Standard or multi-user Google Sheet link: /spreadsheets/d/{id}/ or /spreadsheets/u/0/d/{id}/
+            var matchId = Regex.Match(url, @"docs\.google\.com/spreadsheets/(?:u/[0-9]+/)?d/([a-zA-Z0-9-_]+)");
             if (matchId.Success && !url.Contains("/d/e/"))
             {
                 var sheetId = matchId.Groups[1].Value;
+                // 1. XLSX export candidate
+                urls.Add($"https://docs.google.com/spreadsheets/d/{sheetId}/export?format=xlsx");
+                // 2. CSV export candidate with gid
                 urls.Add($"https://docs.google.com/spreadsheets/d/{sheetId}/export?format=csv{gidParam}");
+                // 3. Visualization API CSV candidate
                 urls.Add($"https://docs.google.com/spreadsheets/d/{sheetId}/gviz/tq?tqx=out:csv{gidParam}");
+                // 4. Published formats
+                urls.Add($"https://docs.google.com/spreadsheets/d/{sheetId}/pub?output=xlsx{gidParam}");
                 urls.Add($"https://docs.google.com/spreadsheets/d/{sheetId}/pub?output=csv{gidParam}");
             }
 
             if (url.Contains("/pubhtml", StringComparison.OrdinalIgnoreCase))
             {
+                urls.Add(url.Replace("/pubhtml", "/pub?output=xlsx"));
                 urls.Add(url.Replace("/pubhtml", "/pub?output=csv"));
             }
         }
@@ -945,6 +1070,7 @@ public class SheetDataService : ISheetDataService
             {
                 var fileId = matchDrive.Groups[1].Value;
                 urls.Add($"https://drive.google.com/uc?export=download&id={fileId}");
+                urls.Add($"https://drive.google.com/uc?export=download&confirm=t&id={fileId}");
             }
         }
 
@@ -961,12 +1087,29 @@ public class SheetDataService : ISheetDataService
             }
         }
 
-        urls.Add(url);
+        // Only include raw url if it is not a known interactive web viewer page
+        bool isWebReader = url.Contains("/edit", StringComparison.OrdinalIgnoreCase) ||
+                           url.Contains("/view", StringComparison.OrdinalIgnoreCase) ||
+                           url.Contains("/:x:/r/", StringComparison.OrdinalIgnoreCase) ||
+                           url.Contains("/:w:/r/", StringComparison.OrdinalIgnoreCase) ||
+                           url.Contains("/pubhtml", StringComparison.OrdinalIgnoreCase);
+
+        if (!isWebReader || urls.Count == 0)
+        {
+            urls.Add(url);
+        }
+
         return urls.Distinct().ToList();
     }
 
     private static string? ExtractSheetNameFromUrl(string url)
     {
+        var matchFilename = Regex.Match(url, @"/([^/?#]+\.(?:xlsx|xlsm|csv|tsv))(?=[?#]|$)", RegexOptions.IgnoreCase);
+        if (matchFilename.Success)
+        {
+            return Uri.UnescapeDataString(matchFilename.Groups[1].Value);
+        }
+
         if (url.Contains("docs.google.com/spreadsheets", StringComparison.OrdinalIgnoreCase))
         {
             return "Connected Google Sheet";

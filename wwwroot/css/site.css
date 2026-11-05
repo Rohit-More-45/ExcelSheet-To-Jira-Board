@@ -1155,3 +1155,15 @@ kbd {
   padding: 3rem 1rem;
   color: var(--jira-text-muted);
 }
+
+/* Drag and Drop File Zone */
+.jira-drop-zone {
+  border: 2px dashed #0c66e4 !important;
+  background-color: #f7f8f9 !important;
+  transition: all 0.2s ease-in-out;
+}
+.jira-drop-zone:hover,
+.jira-drop-zone.border-primary {
+  background-color: #e9f2ff !important;
+  border-color: #0052cc !important;
+}

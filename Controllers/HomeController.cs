@@ -154,6 +154,7 @@ public class HomeController : Controller
 
     [HttpPost]
     [ValidateAntiForgeryToken]
+    [RequestSizeLimit(150_000_000)]
     public async Task<IActionResult> Import(ImportSheetRequest request)
     {
         try

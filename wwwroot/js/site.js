@@ -233,7 +233,7 @@ function initApplySearchButton() {
 // 7. Generic "Connect Sheet / Paste Link" Helper (Home Page & Modal)
 // --------------------------------------------------------------------------
 function initImportSheetModal() {
-    // 1. Home Page Paste button
+    // 1. Home Page Paste button (URL)
     const homePasteBtn = document.getElementById("homePasteBtn");
     if (homePasteBtn) {
         homePasteBtn.addEventListener("click", function () {
@@ -241,7 +241,7 @@ function initImportSheetModal() {
         });
     }
 
-    // 2. Modal Paste button
+    // 2. Modal Paste button (URL)
     const modalPasteBtn = document.getElementById("pasteClipboardBtn");
     if (modalPasteBtn) {
         modalPasteBtn.addEventListener("click", function () {
@@ -249,26 +249,112 @@ function initImportSheetModal() {
         });
     }
 
+    // 3. Paste raw data from clipboard buttons
+    const homePasteDataBtn = document.getElementById("homePasteDataFromClipboardBtn");
+    if (homePasteDataBtn) {
+        homePasteDataBtn.addEventListener("click", function () {
+            handlePasteToField("homeRawDataInput");
+        });
+    }
+
+    const modalPasteDataBtn = document.getElementById("modalPasteDataFromClipboardBtn");
+    if (modalPasteDataBtn) {
+        modalPasteDataBtn.addEventListener("click", function () {
+            handlePasteToField("modalRawDataInput");
+        });
+    }
+
+    // 4. File Drop Zones (Home & Modal)
+    initDropZone("homeDropZone", "homeFileInput", "homeSelectedFileName", "homeUploadSubmitBtn", "homeUploadForm");
+    initDropZone("modalDropZone", "modalFileInput", "modalSelectedFileName", "modalUploadSubmitBtn", "modalUploadForm");
+
     // Modal shown auto-focus
     const modalEl = document.getElementById("importSheetModal");
     if (modalEl) {
         modalEl.addEventListener("shown.bs.modal", function () {
             const input = document.getElementById("modalSheetUrlInput");
-            if (input) {
+            if (input && document.getElementById("modal-link-pane")?.classList.contains("active")) {
                 input.focus();
                 input.select();
             }
         });
     }
 
-    // Form submit loading indicator
-    const form = document.getElementById("importUrlForm");
-    const submitBtn = document.getElementById("fetchSheetSubmitBtn");
-    if (form && submitBtn) {
+    // Form submit loading indicators
+    bindSubmitSpinner("homeUrlForm", "homeLoadBtn", "Loading Board...");
+    bindSubmitSpinner("importUrlForm", "fetchSheetSubmitBtn", "Loading Board...");
+    bindSubmitSpinner("homeUploadForm", "homeUploadSubmitBtn", "Loading File...");
+    bindSubmitSpinner("modalUploadForm", "modalUploadSubmitBtn", "Loading File...");
+}
+
+function bindSubmitSpinner(formId, btnId, loadingText) {
+    const form = document.getElementById(formId);
+    const btn = document.getElementById(btnId);
+    if (form && btn) {
         form.addEventListener("submit", function () {
-            submitBtn.disabled = true;
-            submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Fetching Sheet...';
+            btn.disabled = true;
+            btn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span> ${loadingText}`;
         });
+    }
+}
+
+function initDropZone(dropZoneId, fileInputId, fileNameDisplayId, submitBtnId, formId) {
+    const dropZone = document.getElementById(dropZoneId);
+    const fileInput = document.getElementById(fileInputId);
+    const fileNameDisplay = document.getElementById(fileNameDisplayId);
+    const submitBtn = document.getElementById(submitBtnId);
+    const form = document.getElementById(formId);
+
+    if (!dropZone || !fileInput) return;
+
+    ['dragenter', 'dragover'].forEach(eventName => {
+        dropZone.addEventListener(eventName, (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            dropZone.classList.add('border-primary', 'bg-white');
+        }, false);
+    });
+
+    ['dragleave', 'drop'].forEach(eventName => {
+        dropZone.addEventListener(eventName, (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            dropZone.classList.remove('border-primary', 'bg-white');
+        }, false);
+    });
+
+    dropZone.addEventListener('drop', (e) => {
+        const dt = e.dataTransfer;
+        const files = dt.files;
+        if (files && files.length > 0) {
+            fileInput.files = files;
+            handleFileSelected(files[0]);
+            // Automatically submit on drop for fastest instant-load experience
+            if (form) {
+                if (submitBtn) {
+                    submitBtn.disabled = true;
+                    submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Loading File...';
+                }
+                form.submit();
+            }
+        }
+    });
+
+    fileInput.addEventListener('change', () => {
+        if (fileInput.files && fileInput.files.length > 0) {
+            handleFileSelected(fileInput.files[0]);
+        }
+    });
+
+    function handleFileSelected(file) {
+        if (fileNameDisplay) {
+            fileNameDisplay.style.display = 'block';
+            fileNameDisplay.innerHTML = `<i class="bi bi-file-earmark-check-fill text-success me-1"></i> Selected: <strong>${file.name}</strong> (${(file.size / 1024).toFixed(1)} KB)`;
+        }
+        if (submitBtn) {
+            submitBtn.disabled = false;
+        }
+        showJiraToast(`File selected: ${file.name}`, true);
     }
 }
 
