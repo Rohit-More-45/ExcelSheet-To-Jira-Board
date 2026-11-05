@@ -337,6 +337,14 @@ public class SheetDataService : ISheetDataService
 
             if (downloadedFilePath == null)
             {
+                // If user pasted a browser viewer link (/:x:/r/ or /Documents/), explain clearly why it can't be fetched anonymously
+                if (url.Contains("/:x:/r/", StringComparison.OrdinalIgnoreCase) ||
+                    url.Contains("/:w:/r/", StringComparison.OrdinalIgnoreCase) ||
+                    (url.Contains("/personal/", StringComparison.OrdinalIgnoreCase) && url.Contains("/Documents/", StringComparison.OrdinalIgnoreCase)))
+                {
+                    return (false, "This is an internal browser viewer URL (copied from your browser address bar), which is restricted to your private browser login session. To open it: paste the original Share link (e.g. with '/:x:/g/'), or click the 'Upload File' tab and drag & drop the downloaded .xlsx file directly.", 0);
+                }
+
                 var isAuthGate = lastError != null && (
                     lastError.Contains("HTML login page", StringComparison.OrdinalIgnoreCase) ||
                     lastError.Contains("401", StringComparison.OrdinalIgnoreCase) ||
@@ -459,6 +467,8 @@ public class SheetDataService : ISheetDataService
 
         try
         {
+            try { File.WriteAllText(cookieFile, ""); } catch { }
+
             var startInfo = new ProcessStartInfo
             {
                 FileName = "curl.exe",
@@ -471,16 +481,28 @@ public class SheetDataService : ISheetDataService
             using var proc = Process.Start(startInfo);
             if (proc != null)
             {
-                proc.WaitForExit((timeoutSeconds + 5) * 1000);
+                var stderrTask = proc.StandardError.ReadToEndAsync();
+                bool exited = proc.WaitForExit((timeoutSeconds + 5) * 1000);
+                if (!exited)
+                {
+                    try { proc.Kill(entireProcessTree: true); } catch { }
+                }
+
                 try { if (File.Exists(cookieFile)) File.Delete(cookieFile); } catch { }
 
-                if (proc.ExitCode == 0 && File.Exists(tempFile))
+                if (proc.HasExited && proc.ExitCode == 0 && File.Exists(tempFile))
                 {
                     var fileInfo = new FileInfo(tempFile);
                     if (fileInfo.Length > 0)
                     {
                         return tempFile;
                     }
+                }
+                else
+                {
+                    var stderr = stderrTask.IsCompleted ? stderrTask.Result : "";
+                    _logger.LogWarning("Curl download returned code {ExitCode} for {Url}. Stderr: {Stderr}",
+                        proc.HasExited ? proc.ExitCode : -1, exportUrl, stderr);
                 }
                 try { if (File.Exists(tempFile)) File.Delete(tempFile); } catch { }
             }
@@ -1081,32 +1103,25 @@ public class SheetDataService : ISheetDataService
             {
                 variants.Add(url.Replace("esluk_com", "esl-uk_com", StringComparison.OrdinalIgnoreCase));
             }
-            if (url.Contains("esl-uk_com", StringComparison.OrdinalIgnoreCase))
-            {
-                variants.Add(url.Replace("esl-uk_com", "esluk_com", StringComparison.OrdinalIgnoreCase));
-            }
 
             foreach (var v in variants)
             {
-                // A. Strip /:[xwpb]:/r/ completely (converts browser reader URL into direct document library path)
-                var noReader = Regex.Replace(v, @"/:[xwpb]:/r/", "/", RegexOptions.IgnoreCase);
-                var cleanNoReader = Regex.Replace(noReader, @"\?.*$", "");
-                urls.Add(cleanNoReader + "?download=1");
-
-                // B. Convert /:[xwpb]:/r/ to /:x:/g/ (converts browser reader URL to sharing token URL)
-                var withGuest = Regex.Replace(v, @"/:[xwpb]:/r/", "/:x:/g/", RegexOptions.IgnoreCase);
-                var cleanWithGuest = Regex.Replace(withGuest, @"\?.*$", "");
-                urls.Add(cleanWithGuest + "?download=1");
-
-                // C. Clean direct URL with ?download=1
+                // A. Primary: Clean direct URL with ?download=1 (removes tracking rtime, cid, wdLOR, etc.)
                 var cleanBase = Regex.Replace(v, @"\?.*$", "");
                 urls.Add(cleanBase + "?download=1");
 
-                // D. Direct URL with &download=1
+                // B. Direct URL with &download=1
                 if (v.Contains("?"))
                 {
-                    urls.Add(noReader + (noReader.Contains("?") ? "&download=1" : "?download=1"));
                     urls.Add(v + "&download=1");
+                }
+
+                // C. If browser viewer /:[xwpb]:/r/ was pasted, strip reader to doc library
+                if (Regex.IsMatch(v, @"/:[xwpb]:/r/", RegexOptions.IgnoreCase))
+                {
+                    var noReader = Regex.Replace(v, @"/:[xwpb]:/r/", "/", RegexOptions.IgnoreCase);
+                    var cleanNoReader = Regex.Replace(noReader, @"\?.*$", "");
+                    urls.Add(cleanNoReader + "?download=1");
                 }
             }
 
