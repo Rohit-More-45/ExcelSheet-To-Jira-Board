@@ -20,6 +20,9 @@ public class SheetDataService : ISheetDataService
     private readonly string _mediaDirectory;
 
     private List<SheetIssue> _cachedIssues = new();
+    private Dictionary<string, List<SheetIssue>> _workbookSheets = new(StringComparer.OrdinalIgnoreCase);
+    private List<string> _availableSheetNames = new();
+    private string? _currentSheetName;
     private string _sourceName = "No Sheet Connected";
     private string? _configuredUrl;
     private DateTime _lastUpdated = DateTime.Now;
@@ -65,6 +68,58 @@ public class SheetDataService : ISheetDataService
                 string.Equals(i.Id, id, StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(i.Key, id, StringComparison.OrdinalIgnoreCase));
             return Task.FromResult(issue);
+        }
+    }
+
+    public Task<List<string>> GetAvailableSheetsAsync()
+    {
+        lock (_lock)
+        {
+            return Task.FromResult(new List<string>(_availableSheetNames));
+        }
+    }
+
+    public Task<string?> GetCurrentSheetNameAsync()
+    {
+        lock (_lock)
+        {
+            return Task.FromResult(_currentSheetName);
+        }
+    }
+
+    public Task<Dictionary<string, int>> GetSheetCountsAsync()
+    {
+        lock (_lock)
+        {
+            var dict = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            foreach (var s in _availableSheetNames)
+            {
+                if (_workbookSheets.TryGetValue(s, out var issues))
+                {
+                    dict[s] = issues.Count;
+                }
+                else
+                {
+                    dict[s] = 0;
+                }
+            }
+            return Task.FromResult(dict);
+        }
+    }
+
+    public Task<bool> SelectSheetAsync(string sheetName)
+    {
+        lock (_lock)
+        {
+            if (!string.IsNullOrWhiteSpace(sheetName) && _workbookSheets.TryGetValue(sheetName, out var issues))
+            {
+                _currentSheetName = sheetName;
+                _cachedIssues = issues;
+                var baseSource = _sourceName.Contains('(') ? _sourceName.Substring(0, _sourceName.IndexOf('(')).Trim() : _sourceName;
+                _sourceName = $"{baseSource} ({sheetName})";
+                return Task.FromResult(true);
+            }
+            return Task.FromResult(false);
         }
     }
 
@@ -200,6 +255,12 @@ public class SheetDataService : ISheetDataService
             lock (_lock)
             {
                 _cachedIssues = parsed;
+                _workbookSheets = new Dictionary<string, List<SheetIssue>>(StringComparer.OrdinalIgnoreCase)
+                {
+                    [sourceName] = parsed
+                };
+                _availableSheetNames = new List<string> { sourceName };
+                _currentSheetName = sourceName;
                 _sourceName = sourceName;
                 _lastUpdated = DateTime.Now;
             }
@@ -217,20 +278,28 @@ public class SheetDataService : ISheetDataService
     {
         try
         {
-            var parsed = ParseXlsxToIssues(stream);
-            if (!parsed.Any())
+            var parsedSheets = ParseAllXlsxSheets(stream, out var orderedSheetNames);
+            if (!parsedSheets.Any())
             {
                 return Task.FromResult((false, "No valid records could be parsed from the Excel file.", 0));
             }
 
+            // Default to 1st sheet as requested: "by default open 1st and add dropdown for selecting another sheets"
+            var firstSheet = orderedSheetNames.FirstOrDefault(name => parsedSheets.ContainsKey(name)) 
+                             ?? parsedSheets.Keys.First();
+            var activeIssues = parsedSheets[firstSheet];
+
             lock (_lock)
             {
-                _cachedIssues = parsed;
-                _sourceName = sourceName;
+                _workbookSheets = parsedSheets;
+                _availableSheetNames = orderedSheetNames.Where(n => parsedSheets.ContainsKey(n)).ToList();
+                _currentSheetName = firstSheet;
+                _cachedIssues = activeIssues;
+                _sourceName = $"{sourceName} ({firstSheet})";
                 _lastUpdated = DateTime.Now;
             }
 
-            return Task.FromResult((true, $"Successfully loaded {parsed.Count} live issues with {parsed.Count(p => p.HasPhoto)} photos from Excel.", parsed.Count));
+            return Task.FromResult((true, $"Successfully loaded '{firstSheet}' with {activeIssues.Count} issues and {activeIssues.Count(p => p.HasPhoto)} photos ({parsedSheets.Count} subsheets available).", activeIssues.Count));
         }
         catch (Exception ex)
         {
@@ -521,6 +590,9 @@ public class SheetDataService : ISheetDataService
         lock (_lock)
         {
             _cachedIssues = new List<SheetIssue>();
+            _workbookSheets = new Dictionary<string, List<SheetIssue>>(StringComparer.OrdinalIgnoreCase);
+            _availableSheetNames = new List<string>();
+            _currentSheetName = null;
             _sourceName = "No Sheet Connected";
             _configuredUrl = null;
             _lastUpdated = DateTime.Now;
@@ -533,6 +605,9 @@ public class SheetDataService : ISheetDataService
         lock (_lock)
         {
             _cachedIssues = new List<SheetIssue>();
+            _workbookSheets = new Dictionary<string, List<SheetIssue>>(StringComparer.OrdinalIgnoreCase);
+            _availableSheetNames = new List<string>();
+            _currentSheetName = null;
             _sourceName = "No Sheet Connected";
             _configuredUrl = null;
             _lastUpdated = DateTime.Now;
@@ -559,14 +634,19 @@ public class SheetDataService : ISheetDataService
 
     public List<SheetIssue> ParseXlsxToIssues(Stream stream)
     {
-        var rowToImages = new Dictionary<int, List<string>>();
-        var rows = ParseXlsxRowsAndExtractMedia(stream, rowToImages);
-        return ParseRowsToIssues(rows, rowToImages);
+        var sheets = ParseAllXlsxSheets(stream, out var orderedNames);
+        if (orderedNames.Any() && sheets.TryGetValue(orderedNames[0], out var firstIssues))
+        {
+            return firstIssues;
+        }
+        return sheets.Values.FirstOrDefault() ?? new List<SheetIssue>();
     }
 
-    private List<List<string>> ParseXlsxRowsAndExtractMedia(Stream stream, Dictionary<int, List<string>> rowToImages)
+    public Dictionary<string, List<SheetIssue>> ParseAllXlsxSheets(Stream stream, out List<string> orderedSheetNames)
     {
-        var rows = new List<List<string>>();
+        var result = new Dictionary<string, List<SheetIssue>>(StringComparer.OrdinalIgnoreCase);
+        orderedSheetNames = new List<string>();
+
         using var archive = new ZipArchive(stream, ZipArchiveMode.Read, leaveOpen: true);
 
         // 1. Extract embedded media files (screenshots) to wwwroot/media/
@@ -587,56 +667,7 @@ public class SheetDataService : ISheetDataService
             }
         }
 
-        // 2. Parse drawings relationship to map rId to image filename
-        var rIdToFileName = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        var relsEntry = archive.GetEntry("xl/drawings/_rels/drawing1.xml.rels");
-        if (relsEntry != null)
-        {
-            using var relsStream = relsEntry.Open();
-            var xdocRels = XDocument.Load(relsStream);
-            XNamespace nsRels = xdocRels.Root?.GetDefaultNamespace() ?? XNamespace.None;
-            foreach (var rel in xdocRels.Descendants(nsRels + "Relationship"))
-            {
-                var id = (string?)rel.Attribute("Id");
-                var target = (string?)rel.Attribute("Target");
-                if (!string.IsNullOrEmpty(id) && !string.IsNullOrEmpty(target))
-                {
-                    rIdToFileName[id] = Path.GetFileName(target);
-                }
-            }
-        }
-
-        // 3. Parse drawing1.xml to map row index to image filenames
-        var drawEntry = archive.GetEntry("xl/drawings/drawing1.xml");
-        if (drawEntry != null)
-        {
-            using var drawStream = drawEntry.Open();
-            var xdocDraw = XDocument.Load(drawStream);
-            XNamespace xdrNs = "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing";
-            XNamespace aNs = "http://schemas.openxmlformats.org/drawingml/2006/main";
-            XNamespace rNs = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
-
-            foreach (var anchor in xdocDraw.Descendants(xdrNs + "twoCellAnchor"))
-            {
-                var fromRowEl = anchor.Element(xdrNs + "from")?.Element(xdrNs + "row");
-                var blipEl = anchor.Descendants(aNs + "blip").FirstOrDefault();
-
-                if (fromRowEl != null && int.TryParse(fromRowEl.Value, out var rowIdx) && blipEl != null)
-                {
-                    var embedId = (string?)blipEl.Attribute(rNs + "embed");
-                    if (!string.IsNullOrEmpty(embedId) && rIdToFileName.TryGetValue(embedId, out var imgFileName))
-                    {
-                        if (!rowToImages.ContainsKey(rowIdx))
-                        {
-                            rowToImages[rowIdx] = new List<string>();
-                        }
-                        rowToImages[rowIdx].Add($"/media/{imgFileName}");
-                    }
-                }
-            }
-        }
-
-        // 4. Read shared strings
+        // 2. Read shared strings
         var sharedStrings = new List<string>();
         var sharedStringsEntry = archive.GetEntry("xl/sharedStrings.xml");
         if (sharedStringsEntry != null)
@@ -651,66 +682,249 @@ public class SheetDataService : ISheetDataService
             }
         }
 
-        // 5. Read first worksheet (e.g. Bugs_List)
-        var sheetEntry = archive.GetEntry("xl/worksheets/sheet1.xml") ??
-                         archive.Entries.FirstOrDefault(e => e.FullName.StartsWith("xl/worksheets/sheet", StringComparison.OrdinalIgnoreCase));
-
-        if (sheetEntry == null) return rows;
-
-        using (var sheetStream = sheetEntry.Open())
+        // 3. Map workbook rId to target worksheet file from xl/_rels/workbook.xml.rels
+        var wbRels = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var wbRelsEntry = archive.GetEntry("xl/_rels/workbook.xml.rels");
+        if (wbRelsEntry != null)
         {
-            var xdoc = XDocument.Load(sheetStream);
+            using var s = wbRelsEntry.Open();
+            var xdoc = XDocument.Load(s);
             XNamespace ns = xdoc.Root?.GetDefaultNamespace() ?? XNamespace.None;
-
-            var sheetData = xdoc.Descendants(ns + "sheetData").FirstOrDefault();
-            if (sheetData == null) return rows;
-
-            foreach (var rowEl in sheetData.Elements(ns + "row"))
+            foreach (var rel in xdoc.Descendants(ns + "Relationship"))
             {
-                var rowCells = new List<string>();
-                int currentColIdx = 0;
-
-                foreach (var c in rowEl.Elements(ns + "c"))
+                var id = (string?)rel.Attribute("Id");
+                var target = (string?)rel.Attribute("Target");
+                if (!string.IsNullOrEmpty(id) && !string.IsNullOrEmpty(target))
                 {
-                    var cellRef = (string?)c.Attribute("r") ?? "";
-                    var cellColIdx = GetColumnIndexFromRef(cellRef);
-
-                    while (currentColIdx < cellColIdx)
-                    {
-                        rowCells.Add("");
-                        currentColIdx++;
-                    }
-
-                    var tAttr = (string?)c.Attribute("t");
-                    var vEl = c.Element(ns + "v");
-                    string cellValue = "";
-
-                    if (tAttr == "s" && vEl != null && int.TryParse(vEl.Value, out var sIdx) && sIdx >= 0 && sIdx < sharedStrings.Count)
-                    {
-                        cellValue = sharedStrings[sIdx];
-                    }
-                    else if (tAttr == "inlineStr")
-                    {
-                        var isEl = c.Element(ns + "is");
-                        cellValue = isEl?.Element(ns + "t")?.Value ?? "";
-                    }
-                    else if (vEl != null)
-                    {
-                        cellValue = vEl.Value;
-                    }
-
-                    rowCells.Add(cellValue);
-                    currentColIdx++;
-                }
-
-                if (rowCells.Any(val => !string.IsNullOrWhiteSpace(val)))
-                {
-                    rows.Add(rowCells);
+                    wbRels[id] = target;
                 }
             }
         }
 
+        // 4. Read sheets from xl/workbook.xml in their exact tab display order
+        var sheetsInfo = new List<(string Name, string Target)>();
+        var wbEntry = archive.GetEntry("xl/workbook.xml");
+        if (wbEntry != null)
+        {
+            using var s = wbEntry.Open();
+            var xdoc = XDocument.Load(s);
+            XNamespace ns = xdoc.Root?.GetDefaultNamespace() ?? XNamespace.None;
+            XNamespace rNs = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+
+            foreach (var sheetEl in xdoc.Descendants(ns + "sheet"))
+            {
+                var name = (string?)sheetEl.Attribute("name");
+                var rId = (string?)sheetEl.Attribute(rNs + "id");
+                if (!string.IsNullOrEmpty(name) && !string.IsNullOrEmpty(rId) && wbRels.TryGetValue(rId, out var target))
+                {
+                    var fullTarget = target.StartsWith("xl/") ? target : "xl/" + target.TrimStart('/');
+                    sheetsInfo.Add((name, fullTarget));
+                    orderedSheetNames.Add(name);
+                }
+            }
+        }
+
+        // Fallback if workbook.xml had no recognized sheets
+        if (sheetsInfo.Count == 0)
+        {
+            foreach (var e in archive.Entries.Where(e => e.FullName.StartsWith("xl/worksheets/sheet", StringComparison.OrdinalIgnoreCase) && e.FullName.EndsWith(".xml", StringComparison.OrdinalIgnoreCase)))
+            {
+                var simpleName = Path.GetFileNameWithoutExtension(e.FullName);
+                sheetsInfo.Add((simpleName, e.FullName));
+                orderedSheetNames.Add(simpleName);
+            }
+        }
+
+        // 5. Parse each worksheet and its own dedicated drawings
+        foreach (var sheet in sheetsInfo)
+        {
+            var rowToImages = new Dictionary<int, List<string>>();
+
+            // Find drawing for this specific worksheet
+            var wsRelPath = GetRelationshipPath(sheet.Target);
+            var wsRelEntry = archive.GetEntry(wsRelPath);
+            string? drawingPath = null;
+
+            if (wsRelEntry != null)
+            {
+                using var s = wsRelEntry.Open();
+                var xdoc = XDocument.Load(s);
+                XNamespace ns = xdoc.Root?.GetDefaultNamespace() ?? XNamespace.None;
+                var drawingRel = xdoc.Descendants(ns + "Relationship")
+                    .FirstOrDefault(r => ((string?)r.Attribute("Type"))?.EndsWith("/drawing", StringComparison.OrdinalIgnoreCase) == true);
+
+                if (drawingRel != null)
+                {
+                    var rawTarget = (string?)drawingRel.Attribute("Target");
+                    if (!string.IsNullOrEmpty(rawTarget))
+                    {
+                        drawingPath = ResolveRelativePath(sheet.Target, rawTarget);
+                    }
+                }
+            }
+
+            // If this sheet has a drawing file, parse its rels and anchors
+            if (!string.IsNullOrEmpty(drawingPath))
+            {
+                var drRelPath = GetRelationshipPath(drawingPath);
+                var drRelEntry = archive.GetEntry(drRelPath);
+                var drRels = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+                if (drRelEntry != null)
+                {
+                    using var s = drRelEntry.Open();
+                    var xdoc = XDocument.Load(s);
+                    XNamespace ns = xdoc.Root?.GetDefaultNamespace() ?? XNamespace.None;
+                    foreach (var rel in xdoc.Descendants(ns + "Relationship"))
+                    {
+                        var id = (string?)rel.Attribute("Id");
+                        var target = (string?)rel.Attribute("Target");
+                        if (!string.IsNullOrEmpty(id) && !string.IsNullOrEmpty(target))
+                        {
+                            drRels[id] = Path.GetFileName(target);
+                        }
+                    }
+                }
+
+                var drEntry = archive.GetEntry(drawingPath);
+                if (drEntry != null)
+                {
+                    using var s = drEntry.Open();
+                    var xdoc = XDocument.Load(s);
+                    XNamespace xdrNs = "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing";
+                    XNamespace aNs = "http://schemas.openxmlformats.org/drawingml/2006/main";
+                    XNamespace rNs = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+
+                    // Support both twoCellAnchor and oneCellAnchor
+                    var anchors = xdoc.Descendants(xdrNs + "twoCellAnchor")
+                        .Concat(xdoc.Descendants(xdrNs + "oneCellAnchor"));
+
+                    foreach (var anchor in anchors)
+                    {
+                        var fromRowEl = anchor.Element(xdrNs + "from")?.Element(xdrNs + "row");
+                        var blipEl = anchor.Descendants(aNs + "blip").FirstOrDefault();
+
+                        if (fromRowEl != null && int.TryParse(fromRowEl.Value, out var fromRowIdx) && blipEl != null)
+                        {
+                            // OpenXML drawing row is 0-based. Excel row is 1-based (fromRowIdx + 1).
+                            int excelRowNum = fromRowIdx + 1;
+                            var embedId = (string?)blipEl.Attribute(rNs + "embed");
+                            if (!string.IsNullOrEmpty(embedId) && drRels.TryGetValue(embedId, out var imgFileName))
+                            {
+                                if (!rowToImages.ContainsKey(excelRowNum))
+                                {
+                                    rowToImages[excelRowNum] = new List<string>();
+                                }
+                                var mediaUrl = $"/media/{imgFileName}";
+                                if (!rowToImages[excelRowNum].Contains(mediaUrl))
+                                {
+                                    rowToImages[excelRowNum].Add(mediaUrl);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Parse worksheet rows with exact ExcelRowNum
+            var sheetEntry = archive.GetEntry(sheet.Target);
+            if (sheetEntry == null) continue;
+
+            var parsedRows = ParseWorksheetRows(sheetEntry, sharedStrings);
+            var issues = ParseRowsToIssuesWithExcelRowNumbers(parsedRows, rowToImages, sheet.Name);
+            if (issues.Count > 0)
+            {
+                result[sheet.Name] = issues;
+            }
+        }
+
+        return result;
+    }
+
+    private List<ParsedSheetRow> ParseWorksheetRows(ZipArchiveEntry sheetEntry, List<string> sharedStrings)
+    {
+        var rows = new List<ParsedSheetRow>();
+        using var sheetStream = sheetEntry.Open();
+        var xdoc = XDocument.Load(sheetStream);
+        XNamespace ns = xdoc.Root?.GetDefaultNamespace() ?? XNamespace.None;
+
+        var sheetData = xdoc.Descendants(ns + "sheetData").FirstOrDefault();
+        if (sheetData == null) return rows;
+
+        int defaultRowNum = 1;
+        foreach (var rowEl in sheetData.Elements(ns + "row"))
+        {
+            int excelRowNum = int.TryParse((string?)rowEl.Attribute("r"), out var parsedR) ? parsedR : defaultRowNum;
+            defaultRowNum = excelRowNum + 1;
+
+            var rowCells = new List<string>();
+            int currentColIdx = 0;
+
+            foreach (var c in rowEl.Elements(ns + "c"))
+            {
+                var cellRef = (string?)c.Attribute("r") ?? "";
+                var cellColIdx = GetColumnIndexFromRef(cellRef);
+
+                while (currentColIdx < cellColIdx)
+                {
+                    rowCells.Add("");
+                    currentColIdx++;
+                }
+
+                var tAttr = (string?)c.Attribute("t");
+                var vEl = c.Element(ns + "v");
+                string cellValue = "";
+
+                if (tAttr == "s" && vEl != null && int.TryParse(vEl.Value, out var sIdx) && sIdx >= 0 && sIdx < sharedStrings.Count)
+                {
+                    cellValue = sharedStrings[sIdx];
+                }
+                else if (tAttr == "inlineStr")
+                {
+                    var isEl = c.Element(ns + "is");
+                    cellValue = isEl?.Element(ns + "t")?.Value ?? "";
+                }
+                else if (vEl != null)
+                {
+                    cellValue = vEl.Value;
+                }
+
+                rowCells.Add(cellValue);
+                currentColIdx++;
+            }
+
+            if (rowCells.Any(val => !string.IsNullOrWhiteSpace(val)))
+            {
+                rows.Add(new ParsedSheetRow
+                {
+                    ExcelRowNum = excelRowNum,
+                    Cells = rowCells
+                });
+            }
+        }
+
         return rows;
+    }
+
+    private static string GetRelationshipPath(string partPath)
+    {
+        var dir = Path.GetDirectoryName(partPath)?.Replace('\\', '/') ?? "";
+        var fileName = Path.GetFileName(partPath);
+        return string.IsNullOrEmpty(dir) ? $"_rels/{fileName}.rels" : $"{dir}/_rels/{fileName}.rels";
+    }
+
+    private static string ResolveRelativePath(string basePath, string relativeTarget)
+    {
+        var baseDir = Path.GetDirectoryName(basePath)?.Replace('\\', '/') ?? "";
+        var combined = Path.Combine(baseDir, relativeTarget).Replace('\\', '/');
+        var parts = combined.Split('/');
+        var stack = new List<string>();
+        foreach (var p in parts)
+        {
+            if (p == "..") { if (stack.Count > 0) stack.RemoveAt(stack.Count - 1); }
+            else if (p != "." && !string.IsNullOrEmpty(p)) { stack.Add(p); }
+        }
+        return string.Join('/', stack);
     }
 
     private static int GetColumnIndexFromRef(string cellRef)
@@ -732,7 +946,24 @@ public class SheetDataService : ISheetDataService
 
     public List<SheetIssue> ParseRowsToIssues(List<List<string>> rows, Dictionary<int, List<string>> rowToImages)
     {
-        if (rows == null || rows.Count == 0)
+        var parsedRows = new List<ParsedSheetRow>();
+        for (int i = 0; i < rows.Count; i++)
+        {
+            parsedRows.Add(new ParsedSheetRow
+            {
+                ExcelRowNum = i + 1,
+                Cells = rows[i]
+            });
+        }
+        return ParseRowsToIssuesWithExcelRowNumbers(parsedRows, rowToImages, "Sheet 1");
+    }
+
+    public List<SheetIssue> ParseRowsToIssuesWithExcelRowNumbers(
+        List<ParsedSheetRow> parsedRows, 
+        Dictionary<int, List<string>> rowToImages,
+        string sheetName)
+    {
+        if (parsedRows == null || parsedRows.Count == 0)
         {
             return new List<SheetIssue>();
         }
@@ -741,10 +972,10 @@ public class SheetDataService : ISheetDataService
         int headerRowIdx = 0;
         int maxHeaderMatches = 0;
 
-        for (int i = 0; i < Math.Min(rows.Count, 5); i++)
+        for (int i = 0; i < Math.Min(parsedRows.Count, 5); i++)
         {
             int matches = 0;
-            foreach (var cell in rows[i])
+            foreach (var cell in parsedRows[i].Cells)
             {
                 var lower = cell?.Trim().ToLowerInvariant() ?? "";
                 if (lower == "key" || lower == "title" || lower == "status" || lower == "priority" ||
@@ -761,10 +992,11 @@ public class SheetDataService : ISheetDataService
             }
         }
 
-        var headers = rows[headerRowIdx].Select(h => h?.Trim() ?? "").ToList();
+        var headers = parsedRows[headerRowIdx].Cells.Select(h => h?.Trim() ?? "").ToList();
         var issues = new List<SheetIssue>();
 
-        bool isBugSheet = headers.Any(h => h.Contains("bug", StringComparison.OrdinalIgnoreCase));
+        bool isBugSheet = sheetName.Contains("bug", StringComparison.OrdinalIgnoreCase) ||
+                          headers.Any(h => h.Contains("bug", StringComparison.OrdinalIgnoreCase));
         string defaultPrefix = isBugSheet ? "BUG" : "TASK";
 
         // Heuristics for standard fields across any generic spreadsheet
@@ -797,15 +1029,16 @@ public class SheetDataService : ISheetDataService
 
         int startRow = headerRowIdx + 1;
         // If there's only 1 row total and it has no header matches, treat it as a single data row
-        if (rows.Count == 1 && maxHeaderMatches == 0)
+        if (parsedRows.Count == 1 && maxHeaderMatches == 0)
         {
             startRow = 0;
         }
 
         int rowNum = 1;
-        for (int r = startRow; r < rows.Count; r++)
+        for (int r = startRow; r < parsedRows.Count; r++)
         {
-            var row = rows[r];
+            var rowObj = parsedRows[r];
+            var row = rowObj.Cells;
             if (row.All(string.IsNullOrWhiteSpace))
             {
                 continue;
@@ -899,9 +1132,10 @@ public class SheetDataService : ISheetDataService
                 issue.CreatedDate = parsedCreated;
             }
 
-            // Attached Photos from Excel Drawings
+            // Attached Photos from Excel Drawings:
+            // MATCHED BY EXACT EXCEL ROW NUMBER (no shifting, no off-by-one errors)
             var photosList = new List<string>();
-            if (rowToImages.TryGetValue(r, out var drawingPhotos))
+            if (rowToImages.TryGetValue(rowObj.ExcelRowNum, out var drawingPhotos))
             {
                 photosList.AddRange(drawingPhotos);
             }

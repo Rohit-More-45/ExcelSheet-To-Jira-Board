@@ -11,6 +11,10 @@ public interface ISheetDataService
     Task<List<string>> GetAllPrioritiesAsync();
     Task<List<string>> GetAllIssueTypesAsync();
     Task<List<string>> GetAllColumnNamesAsync();
+    Task<List<string>> GetAvailableSheetsAsync();
+    Task<string?> GetCurrentSheetNameAsync();
+    Task<Dictionary<string, int>> GetSheetCountsAsync();
+    Task<bool> SelectSheetAsync(string sheetName);
     Task<(bool Success, string Message, int Count)> ImportCsvAsync(string csvContent, string sourceName);
     Task<(bool Success, string Message, int Count)> ImportXlsxAsync(Stream stream, string sourceName);
     Task<(bool Success, string Message, int Count)> ImportFromUrlAsync(string url);

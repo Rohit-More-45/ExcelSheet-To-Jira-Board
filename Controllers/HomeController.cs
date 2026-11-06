@@ -23,10 +23,20 @@ public class HomeController : Controller
         [FromQuery(Name = "assignee")] string[]? assignee,
         [FromQuery(Name = "priority")] string[]? priority,
         [FromQuery(Name = "type")] string[]? type,
+        string? sheet,
         bool withPhotos = false,
         string sortBy = "priority-desc",
         string view = "board")
     {
+        if (!string.IsNullOrWhiteSpace(sheet))
+        {
+            await _sheetService.SelectSheetAsync(sheet);
+        }
+
+        var availableSheets = await _sheetService.GetAvailableSheetsAsync();
+        var currentSheet = await _sheetService.GetCurrentSheetNameAsync();
+        var sheetCounts = await _sheetService.GetSheetCountsAsync();
+
         var allIssues = await _sheetService.GetAllIssuesAsync();
         var statuses = await _sheetService.GetAllStatusesAsync();
         var assignees = await _sheetService.GetAllAssigneesAsync();
@@ -83,6 +93,9 @@ public class HomeController : Controller
             AssigneeCounts = assigneeCounts,
             PriorityCounts = priorityCounts,
             TypeCounts = typeCounts,
+            AvailableSheets = availableSheets,
+            CurrentSheetName = currentSheet,
+            SheetCounts = sheetCounts,
             TotalUnfilteredCount = allIssues.Count,
             CurrentSearch = search ?? "",
             CurrentStatusFilters = statusList,
@@ -97,7 +110,21 @@ public class HomeController : Controller
             LastUpdated = _sheetService.GetLastUpdated()
         };
 
+        ViewBag.AvailableSheets = availableSheets;
+        ViewBag.CurrentSheetName = currentSheet;
+        ViewBag.SheetCounts = sheetCounts;
+
         return View(model);
+    }
+
+    [HttpGet]
+    public async Task<IActionResult> SelectSheet(string name, string? view = "board")
+    {
+        if (!string.IsNullOrWhiteSpace(name))
+        {
+            await _sheetService.SelectSheetAsync(name);
+        }
+        return RedirectToAction(nameof(Index), new { sheet = name, view = view });
     }
 
     private static List<string> CleanFilterArray(string[]? input)

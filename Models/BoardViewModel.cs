@@ -32,6 +32,9 @@ public class BoardViewModel
     public string ActiveView { get; set; } = "board"; // board, table, gallery
 
     public string SheetSourceTitle { get; set; } = "Default Sheet";
+    public List<string> AvailableSheets { get; set; } = new();
+    public string? CurrentSheetName { get; set; }
+    public Dictionary<string, int> SheetCounts { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public string? ConfiguredUrl { get; set; }
     public bool HasConfiguredUrl => !string.IsNullOrWhiteSpace(ConfiguredUrl);
     public DateTime LastUpdated { get; set; } = DateTime.Now;
@@ -75,5 +78,11 @@ public class ImportSheetRequest
     public string? GoogleSheetUrl { get; set; }
     public IFormFile? UploadFile { get; set; }
     public string? RawData { get; set; }
+}
+
+public class ParsedSheetRow
+{
+    public int ExcelRowNum { get; set; }
+    public List<string> Cells { get; set; } = new();
 }
 

@@ -119,9 +119,42 @@ else
                 <h1 class="jira-project-title fs-5 mb-0">
                     <i class="bi bi-kanban text-primary"></i> Live Jira Board
                 </h1>
-                <span class="jira-badge-source py-0 px-2 small">
-                    <i class="bi bi-file-earmark-spreadsheet-fill"></i> @Model.SheetSourceTitle
-                </span>
+
+                @if (Model.AvailableSheets.Count > 1)
+                {
+                    <div class="dropdown">
+                        <button class="btn btn-sm btn-outline-primary dropdown-toggle d-flex align-items-center gap-1 font-monospace fw-semibold py-1 px-2 shadow-sm" 
+                                type="button" id="subsheetDropdown" data-bs-toggle="dropdown" aria-expanded="false" title="Switch Worksheet">
+                            <i class="bi bi-file-earmark-spreadsheet-fill text-success"></i>
+                            <span>Sheet: @(Model.CurrentSheetName ?? "Select Sheet")</span>
+                        </button>
+                        <ul class="dropdown-menu shadow-sm" aria-labelledby="subsheetDropdown" style="min-width: 240px;">
+                            <li class="dropdown-header text-uppercase fs-xs text-secondary fw-bold">Worksheets in Workbook</li>
+                            @foreach (var sName in Model.AvailableSheets)
+                            {
+                                var isCurrent = sName.Equals(Model.CurrentSheetName, StringComparison.OrdinalIgnoreCase);
+                                var count = Model.SheetCounts.TryGetValue(sName, out var c) ? c : 0;
+                                <li>
+                                    <a class="dropdown-item d-flex justify-content-between align-items-center py-2 @(isCurrent ? "active fw-bold" : "")" 
+                                       href="@Url.Action("Index", "Home", new { sheet = sName, view = Model.ActiveView })">
+                                        <span class="d-flex align-items-center gap-2 text-truncate me-2">
+                                            <i class="bi bi-table @(isCurrent ? "text-white" : "text-primary")"></i>
+                                            <span class="text-truncate">@sName</span>
+                                        </span>
+                                        <span class="badge @(isCurrent ? "bg-light text-primary" : "bg-secondary-subtle text-dark") rounded-pill">@count</span>
+                                    </a>
+                                </li>
+                            }
+                        </ul>
+                    </div>
+                }
+                else
+                {
+                    <span class="jira-badge-source py-0 px-2 small">
+                        <i class="bi bi-file-earmark-spreadsheet-fill"></i> @Model.SheetSourceTitle
+                    </span>
+                }
+
                 <span class="text-muted small">
                     Showing <strong id="visibleCardsCounter">@Model.TotalIssuesCount</strong> of <strong>@Model.TotalUnfilteredCount</strong> cards
                 </span>
@@ -132,6 +165,7 @@ else
                 <div class="btn-group btn-group-sm" role="group" aria-label="View switch">
                     <a asp-action="Index" 
                        asp-route-view="board" 
+                       asp-route-sheet="@Model.CurrentSheetName"
                        asp-route-search="@Model.CurrentSearch" 
                        asp-route-status="@string.Join(",", Model.CurrentStatusFilters)" 
                        asp-route-assignee="@string.Join(",", Model.CurrentAssigneeFilters)" 
@@ -144,6 +178,7 @@ else
                     </a>
                     <a asp-action="Index" 
                        asp-route-view="table" 
+                       asp-route-sheet="@Model.CurrentSheetName"
                        asp-route-search="@Model.CurrentSearch" 
                        asp-route-status="@string.Join(",", Model.CurrentStatusFilters)" 
                        asp-route-assignee="@string.Join(",", Model.CurrentAssigneeFilters)" 
@@ -156,6 +191,7 @@ else
                     </a>
                     <a asp-action="Index" 
                        asp-route-view="gallery" 
+                       asp-route-sheet="@Model.CurrentSheetName"
                        asp-route-search="@Model.CurrentSearch" 
                        asp-route-status="@string.Join(",", Model.CurrentStatusFilters)" 
                        asp-route-assignee="@string.Join(",", Model.CurrentAssigneeFilters)" 
@@ -177,6 +213,7 @@ else
         <!-- Filter Row: Simple, Clean & Responsive -->
         <form id="filterForm" method="get" asp-action="Index" class="jira-filter-bar">
             <input type="hidden" name="view" value="@Model.ActiveView" />
+            <input type="hidden" name="sheet" value="@Model.CurrentSheetName" />
             <input type="hidden" name="withPhotos" id="withPhotosHidden" value="@(Model.OnlyWithPhotos ? "true" : "false")" />
 
             <!-- Live Search Bar -->
